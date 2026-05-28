@@ -331,7 +331,7 @@ function emitVectorOnlyContainerJsx(
     undefined,
     parentContextOf(options),
   );
-  const transform = transformForNode(node, options.rootMode, options.parentLayout);
+  const transform = transformForNode(node, options.rootMode);
   const wrapperProps: JsxProp[] = [...dataAttrs];
   wrapperProps.push(styleAsProp(svgStyle, transform));
   const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index, childrenOf }, wrapperProps);
@@ -380,7 +380,7 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
 
   const computedStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, inferred, parentContextOf(options));
   const style = mergeAbsorbedStyle(computedStyle, absorbed.style);
-  const transform = transformForNode(node, rootMode, parentLayout);
+  const transform = transformForNode(node, rootMode);
 
   const orderedChildren = childrenForEmit(node, baseChildren, inferred);
   const props: JsxProp[] = [...dataAttrs];
@@ -719,7 +719,7 @@ function emitVectorShapeJsx(node: FigNode, context: EmitContext, baseProps: read
 function emitTextJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
   const { rootMode, parentLayout } = options;
   const style = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, undefined, parentContextOf(options));
-  const transform = transformForNode(node, rootMode, parentLayout);
+  const transform = transformForNode(node, rootMode);
   const dataAttrs = dataAttributes(node, context.debugAttrs);
   const baseProps: JsxProp[] = [...dataAttrs, styleAsProp(style, transform)];
   const characters = textCharacters(node);
@@ -904,7 +904,7 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   context.imports.set(target.componentName, importPath);
 
   const wrapStyle = nodeToStyle(node, styleInputsOf(context), options.rootMode, options.parentLayout, options.offsetBias, undefined, parentContextOf(options));
-  const wrapTransform = transformForNode(node, options.rootMode, options.parentLayout);
+  const wrapTransform = transformForNode(node, options.rootMode);
 
   const variant = variantValueForInstance(context.source, context.registry, node);
   const overrideVars = resolveInstancePaintOverrides(resolved.effectiveSymbol, resolved.resolvedChildren, context);
@@ -1231,15 +1231,25 @@ function formatAssignmentProp(
   }
 }
 
+/**
+ * Translate a FigNode's stored matrix into the CSS `transform` value
+ * for emission. `transformFromMatrix` already strips the translation
+ * components (the matrix is emitted with `0, 0` in the translation
+ * slots and `undefined` is returned when the 2x2 part is identity), so
+ * autolayout-flow children whose Figma matrix is pure translation
+ * naturally produce no `transform` here. A rotated / scaled / skewed
+ * child preserves its visual transform regardless of whether the
+ * parent positions it via flex flow or absolute coordinates — flex
+ * owns the layout slot, the matrix owns what happens inside that slot.
+ *
+ * The root frame is mounted by the harness at (0,0) with no transform,
+ * so its own matrix is suppressed here.
+ */
 function transformForNode(
   node: FigNode,
   rootMode: RootMode | undefined,
-  parentLayout: ParentLayout,
 ): string | undefined {
   if (rootMode !== undefined) {
-    return undefined;
-  }
-  if (flowsInParent(parentLayout, node)) {
     return undefined;
   }
   return transformFromMatrix(node.transform);
@@ -1250,13 +1260,6 @@ function variantPropOf(variant: string | undefined): JsxProp | undefined {
     return undefined;
   }
   return strProp("variant", variant);
-}
-
-function flowsInParent(parent: ParentLayout, node: FigNode): boolean {
-  if (parent !== "flex-row" && parent !== "flex-column") {
-    return false;
-  }
-  return node.stackPositioning?.name !== "ABSOLUTE";
 }
 
 /**
