@@ -56,7 +56,7 @@ async function waitForReady(page: Page): Promise<void> {
   );
 }
 
-test("small fixture renders the toolbar without diagnostics", async ({ page }) => {
+test("small fixture renders the viewer workspace without diagnostics", async ({ page }) => {
   const diagnostics: DiagnosticEntry[] = [];
   const recorder = makeRecorder(diagnostics);
   page.on("console", recorder.onConsole);
@@ -68,8 +68,11 @@ test("small fixture renders the toolbar without diagnostics", async ({ page }) =
     throw new Error(`webview never posted webview/ready\n${await dumpState(page, diagnostics, "ready timeout")}\n${err}`);
   });
 
-  const filename = page.locator(".higma-fig-toolbar__filename");
-  await expect(filename).toHaveText("sample.fig", { timeout: 15_000 });
+  // The header was removed when zoom/Fit moved into the VS Code status
+  // bar; `.higma-fig-workspace` now serves the same "viewer mounted and
+  // consumed fig/loaded" signal — it renders only after the document
+  // parses successfully (the loading and error states use sibling DOM).
+  await expect(page.locator(".higma-fig-workspace")).toBeVisible({ timeout: 15_000 });
 
   const handle = (await page.evaluate(() => window.__higmaE2E)) as E2EHandle | undefined;
   const webviewErrors = (handle?.captured ?? []).filter((m) => m.type === "webview/log" && m.level === "error");
@@ -91,10 +94,11 @@ test("large real-world fixture renders the fig content", async ({ page }) => {
     throw new Error(`webview never posted webview/ready\n${await dumpState(page, diagnostics, "ready timeout")}\n${err}`);
   });
 
-  // The fig viewer must surface the toolbar with the real filename
-  // (i.e. it actually progressed past `createFigDocumentContext`).
-  await expect(page.locator(".higma-fig-toolbar__filename"))
-    .toHaveText("sample-file.fig", { timeout: 30_000 });
+  // The fig viewer must reach the three-pane workspace — proves the
+  // webview progressed past `createFigDocumentContext`. The old header
+  // assertion (filename in `.higma-fig-toolbar__filename`) was retired
+  // when the header itself moved to the VS Code status bar.
+  await expect(page.locator(".higma-fig-workspace")).toBeVisible({ timeout: 30_000 });
 
   // The renderer emits an SVG with `data-fig-family-page-renderer=""`
   // and at least one child node when the page actually painted. The

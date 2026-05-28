@@ -31,6 +31,7 @@ import "../src/webview/styles.css";
 
 import smallFixtureUrl from "../spec/e2e/fixtures/sample.fig?url";
 import largeFixtureUrl from "../../@higma-document-io/fig/samples/sample-file.fig?url";
+import { triggerBlobDownload } from "../src/webview/export/download";
 
 type DevTheme = "dark" | "light";
 type DevFixture = "small" | "large" | "garbage";
@@ -40,6 +41,70 @@ type VsCodeStubApi = {
   setState(state: unknown): void;
   getState(): unknown;
 };
+
+const DEV_EXPORT_DIRECTORY_LABEL = "~/Downloads (dev:ui fallback)";
+
+function dispatchToWebview(payload: unknown): void {
+  window.dispatchEvent(new MessageEvent("message", { data: payload }));
+}
+
+function decodeBase64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Handle a `viewer/exportFile` request from the webview by triggering
+ * an anchor download (the closest thing the browser playground has to
+ * `workspace.fs.writeFile`) and replying with `viewer/exportResult`.
+ *
+ * Without this the InspectPanel would hang on its export Promise
+ * forever inside `dev:ui`, because the webview always goes through the
+ * host channel since the production code dropped the
+ * "no-host → anchor download" branch.
+ */
+function handleViewerExportFile(payload: {
+  readonly requestId: unknown;
+  readonly fileName: unknown;
+  readonly mimeType: unknown;
+  readonly bytesBase64: unknown;
+}): void {
+  if (
+    typeof payload.requestId !== "string" ||
+    typeof payload.fileName !== "string" ||
+    typeof payload.mimeType !== "string" ||
+    typeof payload.bytesBase64 !== "string"
+  ) {
+    console.warn("[dev:ui] dropped malformed viewer/exportFile", payload);
+    return;
+  }
+  try {
+    const bytes = decodeBase64ToBytes(payload.bytesBase64);
+    const blob = new Blob([bytes], { type: payload.mimeType });
+    triggerBlobDownload(blob, payload.fileName);
+    dispatchToWebview({
+      type: "viewer/exportResult",
+      requestId: payload.requestId,
+      fileName: payload.fileName,
+      outcome: {
+        kind: "saved",
+        savedFsPath: `~/Downloads/${payload.fileName}`,
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    dispatchToWebview({
+      type: "viewer/exportResult",
+      requestId: payload.requestId,
+      fileName: payload.fileName,
+      outcome: { kind: "error", message },
+    });
+  }
+}
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -64,9 +129,28 @@ function installVsCodeApiStub(setStatus: (text: string) => void): void {
         if (typeof raw !== "object" || raw === null) {
           return;
         }
-        const message = raw as { type?: unknown; level?: unknown; message?: unknown };
+        const message = raw as {
+          type?: unknown;
+          level?: unknown;
+          message?: unknown;
+          requestId?: unknown;
+          fileName?: unknown;
+          mimeType?: unknown;
+          bytesBase64?: unknown;
+        };
         if (message.type === "webview/ready") {
           setStatus("ready");
+          // Push the synthetic `viewer/config` the real extension host
+          // would deliver after `webview/ready`, so the InspectPanel's
+          // "Output folder" row shows a meaningful label inside the
+          // dev playground instead of "…".
+          dispatchToWebview({
+            type: "viewer/config",
+            config: {
+              exportDirectoryFsPath: DEV_EXPORT_DIRECTORY_LABEL,
+              exportDirectoryLabel: DEV_EXPORT_DIRECTORY_LABEL,
+            },
+          });
           return;
         }
         if (message.type === "webview/log") {
@@ -82,7 +166,27 @@ function installVsCodeApiStub(setStatus: (text: string) => void): void {
           } else {
             console.info("[webview/log]", text);
           }
+          return;
         }
+        if (message.type === "viewer/exportFile") {
+          handleViewerExportFile({
+            requestId: message.requestId,
+            fileName: message.fileName,
+            mimeType: message.mimeType,
+            bytesBase64: message.bytesBase64,
+          });
+          return;
+        }
+        if (message.type === "viewer/chooseExportDirectory") {
+          // The browser has no folder picker that maps to
+          // `workspace.fs`. Inform the developer instead of silently
+          // dropping the request — full coverage requires `bun run dev`.
+          // eslint-disable-next-line no-alert -- dev playground only
+          window.alert("Choose-folder is not supported in dev:ui. Launch via `bun run dev` to exercise the real folder picker.");
+          return;
+        }
+        // viewer/state arrives every zoom tick — quietly ignored here;
+        // the production host would forward it to the status bar.
       },
       setState() {
         return;

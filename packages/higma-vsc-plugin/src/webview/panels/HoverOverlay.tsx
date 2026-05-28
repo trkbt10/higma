@@ -21,6 +21,7 @@
  */
 
 import type { NodeBounds } from "../geometry/node-bounds";
+import type { WorldRect } from "../geometry/marquee";
 import type { ViewportTransform } from "../FigViewer";
 
 type Props = {
@@ -122,4 +123,31 @@ function formatDimension(value: number): string {
     return `${Math.round(value)}`;
   }
   return value.toFixed(2);
+}
+
+type MarqueeOverlayProps = {
+  readonly viewport: ViewportTransform;
+  readonly rect: WorldRect;
+};
+
+/**
+ * Translucent rectangle painted while the user drags a marquee on the
+ * stage. Sits alongside the hover / selection boxes so the same
+ * surface-px transform applies (`surface = world * scale + translate`).
+ */
+export function MarqueeOverlay({ viewport, rect }: MarqueeOverlayProps) {
+  return (
+    <div
+      className="higma-fig-overlay higma-fig-overlay--marquee"
+      style={{
+        position: "absolute",
+        left: rect.x * viewport.scale + viewport.translateX,
+        top: rect.y * viewport.scale + viewport.translateY,
+        width: rect.width * viewport.scale,
+        height: rect.height * viewport.scale,
+        pointerEvents: "none",
+      }}
+      data-testid="fig-overlay-marquee"
+    />
+  );
 }

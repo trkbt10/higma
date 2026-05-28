@@ -29,7 +29,44 @@
         ],
         "priority": "default"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "higma.figViewer.zoomIn",
+        "title": "Higma Fig Viewer: Zoom In",
+        "category": "Higma Fig Viewer"
+      },
+      {
+        "command": "higma.figViewer.zoomOut",
+        "title": "Higma Fig Viewer: Zoom Out",
+        "category": "Higma Fig Viewer"
+      },
+      {
+        "command": "higma.figViewer.zoomReset",
+        "title": "Higma Fig Viewer: Reset Zoom to 100%",
+        "category": "Higma Fig Viewer"
+      },
+      {
+        "command": "higma.figViewer.fit",
+        "title": "Higma Fig Viewer: Fit to Window",
+        "category": "Higma Fig Viewer"
+      },
+      {
+        "command": "higma.figViewer.chooseExportDirectory",
+        "title": "Higma Fig Viewer: Choose Export Folder…",
+        "category": "Higma Fig Viewer"
+      }
+    ],
+    "configuration": {
+      "title": "Higma Fig Viewer",
+      "properties": {
+        "higma.figViewer.exportDirectory": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder where layer exports (PNG / JPEG / SVG) are written.\n\nLeave empty to write next to the opened `.fig` file. Otherwise an absolute path, or a path starting with `~` (expanded to the user's home directory), or a workspace-relative path (resolved against the workspace folder containing the `.fig` file)."
+        }
+      }
+    }
   },
   "scripts": {
     "build:assets": "mkdir -p dist && cp src/webview/styles.css dist/webview.css",

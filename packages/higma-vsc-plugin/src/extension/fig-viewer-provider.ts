@@ -8,6 +8,10 @@
  *      a base64 payload.
  *   3. Configure the webview HTML with a strict CSP and the JS/CSS asset
  *      URIs derived from the extension's bundled `dist/` directory.
+ *   4. Bridge `viewer/*` messages between the webview and the
+ *      `SessionManager` — the manager owns the cross-cutting status
+ *      bar / commands / export I/O state so this file can stay focused
+ *      on the customEditor wiring.
  *
  * The provider is a `CustomReadonlyEditorProvider` because the viewer
  * does not yet support edits — saving / undo are intentionally absent.
@@ -16,6 +20,7 @@
 import * as vscode from "vscode";
 import type { ExtensionToWebviewMessage, WebviewToExtensionMessage } from "../shared/protocol";
 import { getHigmaOutputChannel } from "./output-channel";
+import { createSessionManager, type SessionManager, type ViewerSession } from "./viewer-session";
 
 const VIEW_TYPE = "higma.figViewer";
 
@@ -164,8 +169,9 @@ async function resolveFigEditor(params: {
   readonly extensionUri: vscode.Uri;
   readonly document: FigDocument;
   readonly webviewPanel: vscode.WebviewPanel;
+  readonly sessions: SessionManager;
 }): Promise<void> {
-  const { extensionUri, document, webviewPanel } = params;
+  const { extensionUri, document, webviewPanel, sessions } = params;
   const channel = getHigmaOutputChannel();
   channel.appendLine(
     `[resolveCustomEditor] opening ${document.uri.toString()} in webview ${webviewPanel.viewType}`,
@@ -182,6 +188,8 @@ async function resolveFigEditor(params: {
   });
   channel.appendLine("[resolveCustomEditor] webview html assigned, waiting for webview/ready…");
 
+  const session: ViewerSession = sessions.createSession(webviewPanel, document.uri);
+
   const disposables: vscode.Disposable[] = [];
   const sendDocument = (): Promise<void> =>
     postFigBytes({ webview: webviewPanel.webview, uri: document.uri });
@@ -196,13 +204,19 @@ async function resolveFigEditor(params: {
         return;
       }
       if (message.type === "webview/ready") {
-        channel.appendLine("[webview→ext] webview/ready received → posting fig/loaded");
+        channel.appendLine("[webview→ext] webview/ready received → posting viewer/config + fig/loaded");
+        sessions.pushInitialConfig(session);
         void sendDocument();
         return;
       }
       if (message.type === "webview/log") {
         forwardLog(message.level, message.message);
+        return;
       }
+      if (sessions.handleWebviewMessage(session, message)) {
+        return;
+      }
+      channel.appendLine(`[webview→ext] unhandled viewer message: ${message.type}`);
     }),
   );
 
@@ -215,6 +229,7 @@ async function resolveFigEditor(params: {
   disposables.push(watcher.onDidChange(() => void sendDocument()));
 
   webviewPanel.onDidDispose(() => {
+    sessions.releaseSession(session);
     while (disposables.length > 0) {
       const next = disposables.pop();
       if (next) {
@@ -227,10 +242,12 @@ async function resolveFigEditor(params: {
 /**
  * Registers the `.fig` custom readonly editor with VS Code.
  *
- * Returns the disposable returned by `vscode.window.registerCustomEditorProvider`
- * so the extension entry can attach it to `context.subscriptions`.
+ * Returns a disposable that owns both the editor provider and the
+ * shared `SessionManager` (status bar item, commands, configuration
+ * listener). `context.subscriptions` is the caller's responsibility.
  */
 export function registerFigViewer(context: vscode.ExtensionContext): vscode.Disposable {
+  const sessions = createSessionManager();
   const provider: vscode.CustomReadonlyEditorProvider<FigDocument> = {
     openCustomDocument(uri) {
       return createFigDocument(uri);
@@ -240,14 +257,19 @@ export function registerFigViewer(context: vscode.ExtensionContext): vscode.Disp
         extensionUri: context.extensionUri,
         document,
         webviewPanel,
+        sessions,
       });
     },
   };
-  return vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
+  const providerDisposable = vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
     webviewOptions: {
       retainContextWhenHidden: true,
     },
     supportsMultipleEditorsPerDocument: false,
+  });
+  return new vscode.Disposable(() => {
+    providerDisposable.dispose();
+    sessions.dispose();
   });
 }
 
@@ -261,6 +283,15 @@ function parseWebviewMessage(raw: unknown): WebviewToExtensionMessage | undefine
   }
   if (candidate.type === "webview/log") {
     return parseWebviewLogMessage(raw);
+  }
+  if (candidate.type === "viewer/state") {
+    return parseViewerStateMessage(raw);
+  }
+  if (candidate.type === "viewer/exportFile") {
+    return parseViewerExportFileMessage(raw);
+  }
+  if (candidate.type === "viewer/chooseExportDirectory") {
+    return { type: "viewer/chooseExportDirectory" };
   }
   return undefined;
 }
@@ -278,6 +309,45 @@ function parseWebviewLogMessage(raw: unknown): WebviewToExtensionMessage | undef
     return undefined;
   }
   return { type: "webview/log", level: log.level, message: log.message };
+}
+
+function parseViewerStateMessage(raw: unknown): WebviewToExtensionMessage | undefined {
+  const state = raw as { zoomPercent?: unknown; fitActive?: unknown };
+  if (typeof state.zoomPercent !== "number" || !Number.isFinite(state.zoomPercent)) {
+    return undefined;
+  }
+  if (typeof state.fitActive !== "boolean") {
+    return undefined;
+  }
+  return {
+    type: "viewer/state",
+    zoomPercent: Math.round(state.zoomPercent),
+    fitActive: state.fitActive,
+  };
+}
+
+function parseViewerExportFileMessage(raw: unknown): WebviewToExtensionMessage | undefined {
+  const payload = raw as {
+    requestId?: unknown;
+    fileName?: unknown;
+    mimeType?: unknown;
+    bytesBase64?: unknown;
+  };
+  if (
+    typeof payload.requestId !== "string" ||
+    typeof payload.fileName !== "string" ||
+    typeof payload.mimeType !== "string" ||
+    typeof payload.bytesBase64 !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    type: "viewer/exportFile",
+    requestId: payload.requestId,
+    fileName: payload.fileName,
+    mimeType: payload.mimeType,
+    bytesBase64: payload.bytesBase64,
+  };
 }
 
 function forwardLog(level: "info" | "warn" | "error", message: string): void {

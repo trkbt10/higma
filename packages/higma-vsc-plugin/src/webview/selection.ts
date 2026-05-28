@@ -124,6 +124,58 @@ function computeRangeSelection(
   return { ids, primaryId: id };
 }
 
+/**
+ * Apply the outcome of a drag-marquee gesture.
+ *
+ * Plain marquee replaces the current selection with the intersecting
+ * ids; Shift-marquee unions them onto the prior selection so the user
+ * can build up a selection across multiple gestures. An empty result
+ * from a plain marquee clears the selection (matching click-on-empty),
+ * while an empty result from a Shift-marquee leaves the prior set
+ * untouched so a stray drag does not nuke an in-progress selection.
+ *
+ * `intersectedIds` is expected to be in painter order; the trailing
+ * id becomes the new primary anchor so the next Shift-click range
+ * extends from the marquee's last touched layer.
+ */
+export function applyMarqueeSelection(
+  state: SelectionState,
+  intersectedIds: readonly string[],
+  modifiers: { readonly shift: boolean },
+): SelectionState {
+  // Shift + nothing hit: a stray drag must not nuke an in-progress
+  // selection that the user built up across earlier gestures.
+  if (modifiers.shift && intersectedIds.length === 0) {
+    return state;
+  }
+  if (modifiers.shift) {
+    const merged = unionPreservingOrder(state.ids, intersectedIds);
+    return {
+      ids: merged,
+      primaryId: intersectedIds[intersectedIds.length - 1] ?? state.primaryId,
+    };
+  }
+  if (intersectedIds.length === 0) {
+    return EMPTY_SELECTION;
+  }
+  return {
+    ids: intersectedIds,
+    primaryId: intersectedIds[intersectedIds.length - 1] ?? null,
+  };
+}
+
+function unionPreservingOrder(a: readonly string[], b: readonly string[]): readonly string[] {
+  const seen = new Set(a);
+  const out: string[] = [...a];
+  for (const id of b) {
+    if (!seen.has(id)) {
+      out.push(id);
+      seen.add(id);
+    }
+  }
+  return out;
+}
+
 function computeToggleSelection(state: SelectionState, id: string): SelectionState {
   const idx = state.ids.indexOf(id);
   if (idx < 0) {

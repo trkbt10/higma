@@ -9,8 +9,9 @@
 import { Component, StrictMode, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createFigDocumentContext, type FigDocumentContext } from "@higma-document-io/fig";
-import type { ExtensionToWebviewMessage } from "../shared/protocol";
+import type { ExtensionToWebviewMessage, ViewerConfig } from "../shared/protocol";
 import { FigViewer } from "./FigViewer";
+import { parseExtensionMessage } from "./protocol-parse";
 import { postToExtension } from "./vscode-api";
 
 // Set the marker the bootstrap inline script polls so it can tell that
@@ -161,49 +162,6 @@ function decodeBase64(base64: string): Uint8Array {
   return bytes;
 }
 
-function parseExtensionMessage(raw: unknown): ExtensionToWebviewMessage | undefined {
-  if (typeof raw !== "object" || raw === null) {
-    return undefined;
-  }
-  const candidate = raw as { type?: unknown };
-  if (candidate.type === "fig/loaded") {
-    return parseLoadedMessage(raw);
-  }
-  if (candidate.type === "fig/error") {
-    return parseFigErrorMessage(raw);
-  }
-  return undefined;
-}
-
-function parseLoadedMessage(raw: unknown): ExtensionToWebviewMessage | undefined {
-  const message = raw as {
-    uri?: unknown;
-    fileName?: unknown;
-    bytesBase64?: unknown;
-  };
-  if (
-    typeof message.uri !== "string" ||
-    typeof message.fileName !== "string" ||
-    typeof message.bytesBase64 !== "string"
-  ) {
-    return undefined;
-  }
-  return {
-    type: "fig/loaded",
-    uri: message.uri,
-    fileName: message.fileName,
-    bytesBase64: message.bytesBase64,
-  };
-}
-
-function parseFigErrorMessage(raw: unknown): ExtensionToWebviewMessage | undefined {
-  const message = raw as { uri?: unknown; message?: unknown };
-  if (typeof message.uri !== "string" || typeof message.message !== "string") {
-    return undefined;
-  }
-  return { type: "fig/error", uri: message.uri, message: message.message };
-}
-
 async function loadFigDocument(params: {
   readonly fileName: string;
   readonly bytesBase64: string;
@@ -227,9 +185,21 @@ async function loadFigDocument(params: {
 
 function App() {
   const [state, setState] = useState<LoadState>({ status: "idle" });
+  const [viewerConfig, setViewerConfig] = useState<ViewerConfig | null>(null);
 
   useEffect(() => {
     const handleMessage = (message: ExtensionToWebviewMessage): void => {
+      if (message.type === "viewer/config") {
+        setViewerConfig(message.config);
+        return;
+      }
+      // viewer/zoomCommand and viewer/exportResult are addressed at
+      // FigViewer and download.ts respectively; they attach their own
+      // window listeners. App-level routing only owns document
+      // lifecycle (fig/*) and the cross-panel viewer/config state.
+      if (message.type !== "fig/loaded" && message.type !== "fig/error") {
+        return;
+      }
       if (message.type === "fig/error") {
         setState({ status: "error", fileName: "", message: message.message });
         return;
@@ -283,7 +253,13 @@ function App() {
       </div>
     );
   }
-  return <FigViewer fileName={state.fileName} context={state.context} />;
+  return (
+    <FigViewer
+      fileName={state.fileName}
+      context={state.context}
+      exportDirectoryLabel={viewerConfig ? viewerConfig.exportDirectoryLabel : null}
+    />
+  );
 }
 
 const container = document.getElementById("higma-fig-root");

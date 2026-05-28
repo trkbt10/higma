@@ -43,6 +43,15 @@ type Props = {
   readonly exporting: boolean;
   readonly exportError: string | null;
   readonly exportStatus: ExportRollupStatus;
+  /**
+   * The current `higma.figViewer.exportDirectory` label, resolved by
+   * the extension host. `null` while the initial `viewer/config`
+   * push is still in flight; the UI shows a neutral placeholder in
+   * that brief window so the layout stays stable.
+   */
+  readonly exportDirectoryLabel: string | null;
+  /** Posts `viewer/chooseExportDirectory` so the host can show the folder picker. */
+  readonly onChooseExportDirectory: () => void;
 };
 
 /** Render the right-hand inspector for the current Kiwi node selection. */
@@ -52,10 +61,14 @@ export function InspectPanel(props: Props) {
   if (selectedNodes.length === 0) {
     return (
       <aside className="higma-fig-sidebar higma-fig-sidebar--right" aria-label="Inspect">
+        <ExportDestinationSection
+          exportDirectoryLabel={props.exportDirectoryLabel}
+          onChooseExportDirectory={props.onChooseExportDirectory}
+        />
         <div className="higma-fig-inspect__empty">
           Select a layer in the canvas or layers panel to inspect it.
           <br />
-          Cmd/Ctrl-click to add to the selection, Shift-click for a range.
+          Drag on empty canvas to range-select top-level frames; Cmd/Ctrl-click to add a single layer, Shift-click for a tree range.
         </div>
       </aside>
     );
@@ -545,6 +558,60 @@ function ExportSection({
       </button>
       <ExportStatusReadout status={exportStatus} />
       {exportError && <div className="higma-fig-inspect__export-error">{exportError}</div>}
+    </section>
+  );
+}
+
+type ExportDestinationSectionProps = {
+  readonly exportDirectoryLabel: string | null;
+  readonly onChooseExportDirectory: () => void;
+};
+
+/**
+ * Top-level panel section that surfaces the globally-configured export
+ * folder. Rendered in the empty-selection view because the destination
+ * is a viewer-wide setting (`higma.figViewer.exportDirectory`), not
+ * per-selection — the user should see and change it without needing a
+ * specific layer selected.
+ */
+function ExportDestinationSection({
+  exportDirectoryLabel,
+  onChooseExportDirectory,
+}: ExportDestinationSectionProps) {
+  const displayLabel = exportDirectoryLabel ?? "…";
+  return (
+    <section
+      className="higma-fig-inspect__section"
+      aria-labelledby="higma-inspect-export-destination"
+    >
+      <h3
+        id="higma-inspect-export-destination"
+        className="higma-fig-inspect__section-title"
+      >
+        Output folder
+      </h3>
+      <div className="higma-fig-inspect__export-destination">
+        <div className="higma-fig-inspect__export-destination-info">
+          <span
+            className="higma-fig-inspect__export-destination-path"
+            title={exportDirectoryLabel ?? "Waiting for viewer/config from extension host"}
+          >
+            {displayLabel}
+          </span>
+          <span className="higma-fig-inspect__export-destination-hint">
+            Applies to every layer exported from any open .fig file.
+          </span>
+        </div>
+        <button
+          type="button"
+          className="higma-fig-button higma-fig-inspect__export-destination-change"
+          onClick={onChooseExportDirectory}
+          aria-label="Change export folder"
+          title="Change export folder"
+        >
+          Change…
+        </button>
+      </div>
     </section>
   );
 }

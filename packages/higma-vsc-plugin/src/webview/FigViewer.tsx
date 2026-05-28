@@ -49,17 +49,21 @@ import type { KiwiSceneGraphMutation } from "@higma-document-renderers/fig/scene
 import { computePageBounds, type PageBounds } from "./page-bounds";
 import { computeNodeBounds, indexBoundsById, type NodeBounds } from "./geometry/node-bounds";
 import { findNodeAtPoint } from "./geometry/hit-test";
+import { buildMarqueeRect, findTopLevelIdsInRect, type WorldPoint, type WorldRect } from "./geometry/marquee";
 import { LayersPanel } from "./panels/LayersPanel";
 import { InspectPanel } from "./panels/InspectPanel";
-import { HoverOverlay, HoverTooltip } from "./panels/HoverOverlay";
+import { HoverOverlay, HoverTooltip, MarqueeOverlay } from "./panels/HoverOverlay";
 import { WebGLViewport } from "./webgl/WebGLViewport";
 import { renderNodeToSvg } from "./export/render-node-svg";
 import { rasterizeSvg } from "./export/rasterize";
-import { triggerBlobDownload, buildExportFileName } from "./export/download";
+import { buildExportFileName, deliverExportBlob } from "./export/download";
 import type { ExportRequest, ExportRollupStatus } from "./export/types";
+import { parseExtensionMessage } from "./protocol-parse";
+import { postToExtension } from "./vscode-api";
 import {
   EMPTY_SELECTION,
   applyClickSelection,
+  applyMarqueeSelection,
   clampSelectionToIds,
   selectionAsSet,
   type SelectionModifiers,
@@ -84,6 +88,13 @@ const PAN_MOVE_THRESHOLD = 3;
 type FigViewerProps = {
   readonly fileName: string;
   readonly context: FigDocumentContext;
+  /**
+   * Workspace-relative or `~`-prefixed label of the export folder,
+   * supplied by the extension host via `viewer/config`. `null` until
+   * the host has had a chance to push the initial config (which
+   * happens immediately after `webview/ready`, so the gap is brief).
+   */
+  readonly exportDirectoryLabel: string | null;
 };
 
 export type ViewportTransform = {
@@ -179,7 +190,12 @@ function fitViewport(
 }
 
 /** Render the VS Code fig viewer against a Kiwi document context. */
-export function FigViewer({ fileName, context }: FigViewerProps) {
+export function FigViewer({ fileName, context, exportDirectoryLabel }: FigViewerProps) {
+  // fileName is no longer painted into a header — VS Code's tab and
+  // window title already show it. The prop is retained because the
+  // outer App resolves it from `fig/loaded` and may need it again for
+  // future surfaces (status bar, accessibility labels).
+  void fileName;
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const resources = useMemo<FigDocumentResources>(() => figDocumentResources(context), [context]);
@@ -368,9 +384,51 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
     // cannot be evaluated against the new tree.
     setSelection(EMPTY_SELECTION);
   }, []);
-  const handlePageSelectChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
-    setActivePageId(event.target.value);
-    setSelection(EMPTY_SELECTION);
+
+  // Mirror zoom + fit state into the extension host so the VS Code
+  // status bar (owned by `viewer-session.ts`) reflects the viewer's
+  // current scale, mirroring the size readout VS Code's image preview
+  // exposes. Posts every meaningful change rather than throttling —
+  // wheel-driven zoom rate-limits itself on the host's status bar
+  // refresh, and React-batched updates collapse intra-frame churn.
+  useEffect(() => {
+    postToExtension({
+      type: "viewer/state",
+      zoomPercent: Math.round(viewport.scale * 100),
+      fitActive: zoomMode === "fit",
+    });
+  }, [viewport.scale, zoomMode]);
+
+  // Listen for zoom commands the host dispatches from the status bar,
+  // QuickPick, and bound commands. Attached at the FigViewer level
+  // because the zoom handlers it owns are the natural sink.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent<unknown>) => {
+      const message = parseExtensionMessage(event.data);
+      if (!message || message.type !== "viewer/zoomCommand") {
+        return;
+      }
+      switch (message.command) {
+        case "in":
+          handleZoomIn();
+          return;
+        case "out":
+          handleZoomOut();
+          return;
+        case "fit":
+          handleFit();
+          return;
+        case "reset":
+          handleResetZoom();
+          return;
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [handleZoomIn, handleZoomOut, handleFit, handleResetZoom]);
+
+  const handleChooseExportDirectory = useCallback(() => {
+    postToExtension({ type: "viewer/chooseExportDirectory" });
   }, []);
 
   // Surface px under cursor → world (page) px. Same inverse the
@@ -445,6 +503,22 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
   } | null>(null);
   const suppressNextClickRef = useRef(false);
 
+  // Drag-marquee: left-drag from an empty stage spot draws a rectangle
+  // and, on release, replaces (or, with Shift held, extends) the
+  // selection with the top-level page children whose AABB intersects
+  // it. The state machine mirrors the pan flow: tentative on
+  // pointerDown, active once movement exceeds `PAN_MOVE_THRESHOLD`, so
+  // a no-move click still falls through to the existing background-
+  // click-clears behaviour.
+  const marqueeStateRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startWorld: WorldPoint;
+    active: boolean;
+  } | null>(null);
+  const [marqueeRect, setMarqueeRect] = useState<WorldRect | null>(null);
+
   useEffect(() => {
     const isFormTarget = (target: EventTarget | null): boolean => {
       if (!(target instanceof HTMLElement)) {return false;}
@@ -477,15 +551,22 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
     };
   }, []);
 
-  const handleStagePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+  // Start a pan gesture if the press button + modifiers qualify.
+  // Returns true when the press was consumed by pan so the caller can
+  // skip the marquee branch.
+  const beginPanIfTriggered = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): boolean => {
       const startPan = event.button === 1 || (event.button === 0 && spacePan);
-      if (!startPan) {return;}
+      if (!startPan) {
+        return false;
+      }
       // preventDefault stops Chrome's middle-click autoscroll cursor
       // and the text selection that Space+drag would otherwise start.
       event.preventDefault();
       const stage = stageRef.current;
-      if (!stage) {return;}
+      if (!stage) {
+        return true;
+      }
       stage.setPointerCapture(event.pointerId);
       const start = viewportRef.current;
       panStateRef.current = {
@@ -498,24 +579,111 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
         moved: false,
       };
       setPanning(true);
+      return true;
     },
     [spacePan],
   );
 
-  const handleStagePointerMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const pan = panStateRef.current;
-      if (pan && pan.pointerId === event.pointerId) {
-        const dx = event.clientX - pan.startClientX;
-        const dy = event.clientY - pan.startClientY;
-        pan.moved = pan.moved || Math.hypot(dx, dy) > PAN_MOVE_THRESHOLD;
-        commitViewport({
-          scale: pan.startScale,
-          translateX: pan.startTranslateX + dx,
-          translateY: pan.startTranslateY + dy,
-        });
+  // Tentative marquee: pointer capture + preventDefault are deferred to
+  // the move-past-threshold transition so a plain click on background
+  // still flows through `handleStageClick` (which clears the selection
+  // on a plain background hit).
+  const beginMarqueeIfTriggered = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (event.button !== 0) {
         return;
       }
+      const startWorld = cursorToPagePoint(event.clientX, event.clientY);
+      if (!startWorld) {
+        return;
+      }
+      if (findNodeAtPoint(nodeBounds, startWorld)) {
+        // Node-press: defer to the click handler at pointerUp.
+        return;
+      }
+      marqueeStateRef.current = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startWorld,
+        active: false,
+      };
+    },
+    [cursorToPagePoint, nodeBounds],
+  );
+
+  const handleStagePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (beginPanIfTriggered(event)) {
+        return;
+      }
+      beginMarqueeIfTriggered(event);
+    },
+    [beginPanIfTriggered, beginMarqueeIfTriggered],
+  );
+
+  const advancePan = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): boolean => {
+      const pan = panStateRef.current;
+      if (!pan || pan.pointerId !== event.pointerId) {
+        return false;
+      }
+      const dx = event.clientX - pan.startClientX;
+      const dy = event.clientY - pan.startClientY;
+      pan.moved = pan.moved || Math.hypot(dx, dy) > PAN_MOVE_THRESHOLD;
+      commitViewport({
+        scale: pan.startScale,
+        translateX: pan.startTranslateX + dx,
+        translateY: pan.startTranslateY + dy,
+      });
+      return true;
+    },
+    [commitViewport],
+  );
+
+  // Transition the marquee from tentative to active: capture the
+  // pointer so subsequent move/up events still arrive even if the
+  // cursor leaves the stage, and start painting the overlay rect.
+  const activateMarquee = useCallback(
+    (marquee: { active: boolean }, pointerId: number): void => {
+      marquee.active = true;
+      const stage = stageRef.current;
+      if (!stage) {
+        return;
+      }
+      stage.setPointerCapture(pointerId);
+    },
+    [],
+  );
+
+  const advanceMarquee = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): boolean => {
+      const marquee = marqueeStateRef.current;
+      if (!marquee || marquee.pointerId !== event.pointerId) {
+        return false;
+      }
+      const dx = event.clientX - marquee.startClientX;
+      const dy = event.clientY - marquee.startClientY;
+      // Still tentative + below the threshold: no overlay, no capture
+      // — the press could still resolve as a plain click.
+      if (!marquee.active && Math.hypot(dx, dy) <= PAN_MOVE_THRESHOLD) {
+        return true;
+      }
+      if (!marquee.active) {
+        activateMarquee(marquee, event.pointerId);
+      }
+      const endWorld = cursorToPagePoint(event.clientX, event.clientY);
+      if (!endWorld) {
+        return true;
+      }
+      setMarqueeRect(buildMarqueeRect(marquee.startWorld, endWorld));
+      return true;
+    },
+    [activateMarquee, cursorToPagePoint],
+  );
+
+  const advanceHover = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): void => {
       setCursor({ x: event.clientX, y: event.clientY });
       const point = cursorToPagePoint(event.clientX, event.clientY);
       if (!point) {
@@ -525,7 +693,20 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
       const hit = findNodeAtPoint(nodeBounds, point);
       setHoveredId(hit ? hit.id : null);
     },
-    [commitViewport, cursorToPagePoint, nodeBounds],
+    [cursorToPagePoint, nodeBounds],
+  );
+
+  const handleStagePointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (advancePan(event)) {
+        return;
+      }
+      if (advanceMarquee(event)) {
+        return;
+      }
+      advanceHover(event);
+    },
+    [advancePan, advanceMarquee, advanceHover],
   );
 
   const finishPan = useCallback((pointerId: number) => {
@@ -540,22 +721,56 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
     setPanning(false);
   }, []);
 
+  const finishMarquee = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const marquee = marqueeStateRef.current;
+      if (!marquee || marquee.pointerId !== event.pointerId) {
+        return;
+      }
+      const stage = stageRef.current;
+      if (stage && stage.hasPointerCapture(event.pointerId)) {
+        stage.releasePointerCapture(event.pointerId);
+      }
+      marqueeStateRef.current = null;
+      if (!marquee.active) {
+        // Never crossed the move threshold — let the click handler
+        // treat this as a plain background click (and clear the
+        // selection if there are no modifiers).
+        return;
+      }
+      const endWorld = cursorToPagePoint(event.clientX, event.clientY);
+      if (endWorld) {
+        const finalRect = buildMarqueeRect(marquee.startWorld, endWorld);
+        const intersectedIds = findTopLevelIdsInRect(nodeBounds, finalRect);
+        setSelection((prev) => applyMarqueeSelection(prev, intersectedIds, { shift: event.shiftKey }));
+      }
+      setMarqueeRect(null);
+      // The synthetic click that follows pointerUp would otherwise hit
+      // the background-clear branch in `handleStageClick`. Suppress it
+      // so the marquee's selection sticks.
+      suppressNextClickRef.current = true;
+    },
+    [cursorToPagePoint, nodeBounds],
+  );
+
   const handleStagePointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       finishPan(event.pointerId);
+      finishMarquee(event);
     },
-    [finishPan],
+    [finishPan, finishMarquee],
   );
 
   const handleStagePointerCancel = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       finishPan(event.pointerId);
+      finishMarquee(event);
     },
-    [finishPan],
+    [finishPan, finishMarquee],
   );
 
   const handleStagePointerLeave = useCallback(() => {
-    if (panStateRef.current) {return;}
+    if (panStateRef.current || marqueeStateRef.current) {return;}
     setHoveredId(null);
     setCursor(null);
   }, []);
@@ -643,73 +858,6 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
 
   return (
     <div className="higma-fig-app">
-      <div className="higma-fig-toolbar" role="toolbar" aria-label="Fig viewer controls">
-        <span className="higma-fig-toolbar__filename" title={fileName}>
-          {fileName}
-        </span>
-        {pages.length > 1 && (
-          <div className="higma-fig-toolbar__group">
-            <label className="higma-fig-toolbar__label" htmlFor="higma-fig-page-select">
-              Page
-            </label>
-            <select
-              id="higma-fig-page-select"
-              className="higma-fig-select"
-              value={activePageId ?? ""}
-              onChange={handlePageSelectChange}
-            >
-              {pages.map((page) => {
-                const pageId = guidToString(page.guid);
-                return (
-                  <option key={pageId} value={pageId}>
-                    {page.name ?? "Page"}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-        )}
-        <div className="higma-fig-toolbar__spacer" />
-        <div className="higma-fig-toolbar__group" aria-label="Zoom">
-          <button
-            type="button"
-            className="higma-fig-button"
-            onClick={handleZoomOut}
-            aria-label="Zoom out"
-            title="Zoom out"
-          >
-            −
-          </button>
-          <button
-            type="button"
-            className="higma-fig-button higma-fig-zoom-display"
-            onClick={handleResetZoom}
-            aria-label="Reset zoom to 100%"
-            title="Reset zoom to 100%"
-          >
-            {Math.round(viewport.scale * 100)}%
-          </button>
-          <button
-            type="button"
-            className="higma-fig-button"
-            onClick={handleZoomIn}
-            aria-label="Zoom in"
-            title="Zoom in"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="higma-fig-button"
-            onClick={handleFit}
-            aria-label="Fit to window"
-            title="Fit to window"
-            aria-pressed={zoomMode === "fit"}
-          >
-            Fit
-          </button>
-        </div>
-      </div>
       <div className="higma-fig-workspace">
         <LayersPanel
           document={context.document}
@@ -748,6 +896,7 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
             selectedBounds={selectedBounds}
             primaryId={selection.primaryId}
             canvasRef={canvasRef}
+            marqueeRect={marqueeRect}
           />
         </div>
         <InspectPanel
@@ -757,6 +906,8 @@ export function FigViewer({ fileName, context }: FigViewerProps) {
           exporting={exporting}
           exportError={exportError}
           exportStatus={exportStatus}
+          exportDirectoryLabel={exportDirectoryLabel}
+          onChooseExportDirectory={handleChooseExportDirectory}
         />
       </div>
       {hoveredNode && cursor && <HoverTooltip node={hoveredNode} cursor={cursor} />}
@@ -882,12 +1033,27 @@ async function exportSingleNode(args: ExportSingleArgs): Promise<void> {
     node,
     renderOptions,
   });
-  if (request.format === "SVG") {
-    const blob = new Blob([rendered.svgString], { type: "image/svg+xml;charset=utf-8" });
-    triggerBlobDownload(blob, fileName);
-    return;
+  const blob = await renderToBlob(rendered, request);
+  const outcome = await deliverExportBlob(blob, fileName);
+  if (outcome.kind === "error") {
+    throw new Error(outcome.message);
   }
-  const blob = await rasterizeSvg({
+}
+
+type RenderedNode = Awaited<ReturnType<typeof renderNodeToSvg>>;
+
+/**
+ * Coerce a rendered node into the bytes the host will write.
+ *
+ * SVG is delivered as the SVG string verbatim; PNG/JPEG go through
+ * `rasterizeSvg` so the scale + alpha flatten policy is uniform
+ * regardless of the destination folder.
+ */
+async function renderToBlob(rendered: RenderedNode, request: ExportRequest): Promise<Blob> {
+  if (request.format === "SVG") {
+    return new Blob([rendered.svgString], { type: "image/svg+xml;charset=utf-8" });
+  }
+  return rasterizeSvg({
     svgString: rendered.svgString,
     width: rendered.width,
     height: rendered.height,
@@ -895,7 +1061,6 @@ async function exportSingleNode(args: ExportSingleArgs): Promise<void> {
     format: request.format,
     jpegBackground: JPEG_ALPHA_FLATTEN_BACKGROUND,
   });
-  triggerBlobDownload(blob, fileName);
 }
 
 function extensionForFormat(format: ExportRequest["format"]): "svg" | "png" | "jpg" {
@@ -945,6 +1110,8 @@ type FigStageContentProps = {
   readonly selectedBounds: readonly NodeBounds[];
   readonly primaryId: string | null;
   readonly canvasRef: React.RefObject<HTMLDivElement | null>;
+  /** Live drag-marquee rectangle (world coords); `null` when no marquee is active. */
+  readonly marqueeRect: WorldRect | null;
 };
 
 const MIN_RENDER_DIM = 1;
@@ -965,6 +1132,7 @@ function FigStageContent({
   selectedBounds,
   primaryId,
   canvasRef,
+  marqueeRect,
 }: FigStageContentProps) {
   // The renderer wants surface = visible CSS px and viewport = the
   // *world*-space rectangle visible inside that surface. Inverting our
@@ -1012,6 +1180,7 @@ function FigStageContent({
         selected={selectedBounds}
         primaryId={primaryId}
       />
+      {marqueeRect && <MarqueeOverlay viewport={viewport} rect={marqueeRect} />}
     </div>
   );
 }

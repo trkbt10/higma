@@ -35,42 +35,6 @@ button {
   width: 100%;
 }
 
-.higma-fig-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px;
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, transparent));
-  flex: 0 0 auto;
-}
-
-.higma-fig-toolbar__label {
-  font-size: calc(var(--vscode-font-size) * 0.95);
-  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
-  user-select: none;
-}
-
-.higma-fig-toolbar__filename {
-  font-size: calc(var(--vscode-font-size) * 0.95);
-  color: var(--vscode-foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 280px;
-}
-
-.higma-fig-toolbar__spacer {
-  flex: 1 1 auto;
-}
-
-.higma-fig-toolbar__group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .higma-fig-select {
   appearance: none;
   background: var(--vscode-dropdown-background, var(--vscode-input-background));
@@ -127,13 +91,6 @@ button {
 .higma-fig-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.higma-fig-zoom-display {
-  min-width: 56px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
 }
 
 .higma-fig-stage {
@@ -684,6 +641,42 @@ button {
   color: var(--vscode-errorForeground);
 }
 
+/* Output-folder row that sits above the format/scale/suffix controls.
+ * The label + path occupies the left flex region; the [Change…] button
+ * docks at the right and never wraps below the path. */
+.higma-fig-inspect__export-destination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.higma-fig-inspect__export-destination-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.higma-fig-inspect__export-destination-path {
+  font-size: calc(var(--vscode-font-size) * 0.95);
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.higma-fig-inspect__export-destination-hint {
+  font-size: calc(var(--vscode-font-size) * 0.85);
+  color: var(--vscode-descriptionForeground);
+}
+
+.higma-fig-inspect__export-destination-change {
+  flex: 0 0 auto;
+}
+
 /* ----------------------------------------------------------------------
  * Hover / selection overlays on the canvas
  * ---------------------------------------------------------------------- */
@@ -714,6 +707,19 @@ button {
   background: color-mix(
     in srgb,
     var(--vscode-focusBorder, #007fd4) 14%,
+    transparent
+  );
+}
+
+/* Live rectangle painted while the user drags a marquee selection on
+ * the stage. Border + faint fill — distinguishable from selection
+ * outlines but visually related. */
+.higma-fig-overlay--marquee {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+  background: color-mix(
+    in srgb,
+    var(--vscode-focusBorder, #007fd4) 12%,
     transparent
   );
 }
