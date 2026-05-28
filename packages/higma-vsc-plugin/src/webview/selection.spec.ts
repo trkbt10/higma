@@ -5,6 +5,7 @@
 import {
   EMPTY_SELECTION,
   applyClickSelection,
+  applyMarqueeSelection,
   clampSelectionToIds,
   replaceSelection,
 } from "./selection";
@@ -82,6 +83,34 @@ describe("applyClickSelection", () => {
     const second = applyClickSelection(first, D, { meta: false, shift: true }, ORDER);
     expect(second.ids).toEqual([C, D]);
     expect(second.primaryId).toBe(D);
+  });
+});
+
+describe("applyMarqueeSelection", () => {
+  it("plain marquee replaces with intersected ids and anchors primary on the trailing id", () => {
+    const start = { ids: [A], primaryId: A } as const;
+    const next = applyMarqueeSelection(start, [B, C], { shift: false });
+    expect(next.ids).toEqual([B, C]);
+    expect(next.primaryId).toBe(C);
+  });
+
+  it("plain marquee with no hits clears the selection", () => {
+    const start = { ids: [A, B], primaryId: B } as const;
+    const next = applyMarqueeSelection(start, [], { shift: false });
+    expect(next).toBe(EMPTY_SELECTION);
+  });
+
+  it("shift marquee unions onto the prior selection without reordering duplicates", () => {
+    const start = { ids: [A, B], primaryId: B } as const;
+    const next = applyMarqueeSelection(start, [B, C, D], { shift: true });
+    expect(next.ids).toEqual([A, B, C, D]);
+    expect(next.primaryId).toBe(D);
+  });
+
+  it("shift marquee with no hits leaves the prior selection untouched", () => {
+    const start = { ids: [A, B], primaryId: A } as const;
+    const next = applyMarqueeSelection(start, [], { shift: true });
+    expect(next).toBe(start);
   });
 });
 

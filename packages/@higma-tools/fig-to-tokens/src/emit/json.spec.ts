@@ -78,6 +78,113 @@ describe("tokensToJson", () => {
     expect(leaf.$value).toBe("16px");
   });
 
+  it("tags boolean / string / shadow values with the right $type", () => {
+    const tokens: TokenSet = {
+      tokens: [
+        {
+          path: "Flag",
+          cssId: "flag",
+          source: "variable",
+          variableSetSlug: "flags",
+          variableSetName: "Flags",
+          defaultModeName: "default",
+          valuesByMode: new Map([
+            ["default", { kind: "boolean", value: true }],
+          ]),
+        },
+        {
+          path: "Label",
+          cssId: "label",
+          source: "variable",
+          variableSetSlug: "strings",
+          variableSetName: "Strings",
+          defaultModeName: "default",
+          valuesByMode: new Map([
+            ["default", { kind: "string", value: "Inter" }],
+          ]),
+        },
+        {
+          path: "Elevation/MD",
+          cssId: "elevation-md",
+          source: "style",
+          variableSetSlug: null,
+          variableSetName: null,
+          defaultModeName: "default",
+          valuesByMode: new Map([
+            ["default", { kind: "shadow", css: "0 2px 4px rgba(0,0,0,0.1)" }],
+          ]),
+        },
+      ],
+      modesBySetSlug: new Map(),
+    };
+    const json = parse(tokensToJson(tokens)) as Record<string, unknown>;
+    expect((json.Flag as Record<string, unknown>).$type).toBe("boolean");
+    expect((json.Flag as Record<string, unknown>).$value).toBe(true);
+    expect((json.Label as Record<string, unknown>).$type).toBe("string");
+    expect(((json.Elevation as Record<string, unknown>).MD as Record<string, unknown>).$type).toBe("shadow");
+  });
+
+  it("tags FLOAT without a unit as number", () => {
+    const token: Token = {
+      path: "Opacity/Disabled",
+      cssId: "opacity-disabled",
+      source: "variable",
+      variableSetSlug: "opacity",
+      variableSetName: "Opacity",
+      defaultModeName: "default",
+      valuesByMode: new Map([
+        ["default", { kind: "number", value: 0.5, unit: null }],
+      ]),
+    };
+    const set: TokenSet = {
+      tokens: [token],
+      modesBySetSlug: new Map([["opacity", ["default"]]]),
+    };
+    const json = parse(tokensToJson(set)) as Record<string, unknown>;
+    const leaf = (json.Opacity as Record<string, unknown>).Disabled as Record<string, unknown>;
+    expect(leaf.$type).toBe("number");
+    expect(leaf.$value).toBe(0.5);
+  });
+
+  it("renames a folder when a leaf already claimed the slot", () => {
+    const tokens: TokenSet = {
+      tokens: [
+        {
+          path: "Colors",
+          cssId: "colors",
+          source: "variable",
+          variableSetSlug: "colors",
+          variableSetName: "Colors",
+          defaultModeName: "default",
+          valuesByMode: new Map([
+            ["default", { kind: "color", css: "#000000" }],
+          ]),
+        },
+        {
+          path: "Colors/Brand/Primary",
+          cssId: "colors-brand-primary",
+          source: "variable",
+          variableSetSlug: "colors",
+          variableSetName: "Colors",
+          defaultModeName: "default",
+          valuesByMode: new Map([
+            ["default", { kind: "color", css: "#0066ff" }],
+          ]),
+        },
+      ],
+      modesBySetSlug: new Map(),
+    };
+    const json = parse(tokensToJson(tokens)) as Record<string, unknown>;
+    // The flat "Colors" leaf wins its name; the nested Colors/Brand/Primary
+    // got routed under "Colors (group)" so the leaf is never silently
+    // dropped.
+    expect((json.Colors as Record<string, unknown>).$value).toBe("#000000");
+    const colorsGroup = json["Colors (group)"] as Record<string, unknown>;
+    expect(((colorsGroup.Brand as Record<string, unknown>).Primary as Record<string, unknown>).$value).toBe(
+      "#0066ff",
+    );
+  });
+
   it("renders typography tokens as composite objects", () => {
     const token: Token = {
       path: "Heading/H1",

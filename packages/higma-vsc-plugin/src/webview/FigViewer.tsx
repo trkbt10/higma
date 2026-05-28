@@ -1228,7 +1228,8 @@ function FigStageContent({
     viewportWidth: Math.max(MIN_RENDER_DIM, worldW),
     viewportHeight: Math.max(MIN_RENDER_DIM, worldH),
     kiwiDocumentMutation: INITIAL_VSC_VIEWER_KIWI_DOCUMENT_MUTATION,
-    pruneToViewport: false,
+    // Match Figma's render: hidden layers stay hidden in the viewer.
+    showHiddenNodes: false,
     resources,
   });
 

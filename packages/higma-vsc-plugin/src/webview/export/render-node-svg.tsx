@@ -78,7 +78,9 @@ export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<Rendered
     viewportWidth: width,
     viewportHeight: height,
     kiwiDocumentMutation: INITIAL_VSC_EXPORT_KIWI_DOCUMENT_MUTATION,
-    pruneToViewport: true,
+    // Match Figma's render: hidden layers in the source subtree stay
+    // hidden in the exported SVG.
+    showHiddenNodes: false,
     resources: figDocumentResources(args.context),
   });
   if (sceneGraph === null) {
