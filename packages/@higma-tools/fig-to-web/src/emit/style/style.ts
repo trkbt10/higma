@@ -1049,6 +1049,27 @@ function renderBorder(width: number, colour: string, dashed: boolean): string {
   return `${formatPx(width)} ${styleKeyword} ${colour}`;
 }
 
+/**
+ * Authoritative rendered font-size for a TEXT node. Figma stores the
+ * authored size in `node.fontSize`, but `derivedTextData.glyphs[*]`
+ * carry the size the rasteriser actually used — these differ when
+ * Figma shrunk the text to fit the textbox or when a breakpoint
+ * scaled the symbol. The Figma SVG export bakes the glyph-level
+ * fontSize into the outlines, so emitting `node.fontSize` would
+ * render visibly larger than the reference. Falls back to the
+ * authored size when `derivedTextData` is unavailable.
+ */
+function renderedFontSize(node: FigNode): number | undefined {
+  const glyphs = (node as { readonly derivedTextData?: { readonly glyphs?: ReadonlyArray<{ readonly fontSize?: number }> } }).derivedTextData?.glyphs;
+  if (glyphs && glyphs.length > 0) {
+    const first = glyphs[0]?.fontSize;
+    if (typeof first === "number" && first > 0) {
+      return first;
+    }
+  }
+  return typeof node.fontSize === "number" ? node.fontSize : undefined;
+}
+
 function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string, string>): void {
   if (node.type.name !== "TEXT") {
     return;
@@ -1125,7 +1146,18 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
 
   const family = node.fontName?.family;
   const styleName = node.fontName?.style;
-  const fontSize = typeof node.fontSize === "number" ? node.fontSize : undefined;
+  // Figma TEXT.fontSize is the *authored* value, but
+  // `derivedTextData.glyphs[*].fontSize` is the size Figma actually
+  // rasterised at. When an authored 42px hero is auto-fit into its
+  // textbox (Figma's "shrink to fit" behaviour, common on
+  // `textAutoResize: WIDTH_AND_HEIGHT` slots where the breakpoint
+  // sized the box but the symbol-default font-size was authored at
+  // a larger desktop scale), the glyph size drops to e.g. 32 while
+  // `fontSize` still reports 42. CSS `font-size: 42px` would then
+  // render markedly larger than the Figma SVG. Prefer the derived
+  // glyph size — it is the only field that matches the rendered
+  // outlines pixel-for-pixel.
+  const fontSize = renderedFontSize(node);
   const lineHeight = lineHeightCss(node.lineHeight);
   const letterSpacing = letterSpacingCss(node.letterSpacing);
 
