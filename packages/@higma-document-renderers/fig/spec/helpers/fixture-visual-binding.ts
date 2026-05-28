@@ -34,7 +34,18 @@ import {
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
+import { createCachingFontLoader } from "@higma-document-models/fig/font";
+import { createNodeFontLoader } from "../../src/font-drivers/node";
 import { renderFigToSvg } from "../../src/svg/renderer";
+
+/**
+ * Shared, lazily-instantiated font loader for all fixture visual
+ * bindings. Wraps the Node OS font catalogue in a caching layer so
+ * fonts like `Noto Sans JP` (used by CJK text-styling frames) resolve
+ * to real glyph metrics — otherwise the text resolver throws
+ * `Text layout requires ascender metrics for font "<family>"`.
+ */
+const fontLoader = createCachingFontLoader(createNodeFontLoader());
 
 /** Per-layer metadata threaded from fixture parse into the renderer call. */
 export type LayerInfo = {
@@ -230,6 +241,7 @@ async function renderLayer(fixture: ParsedFigFixture, layer: LayerInfo): Promise
     childrenOf: resources.childrenOf,
     symbolResolver: resources.symbolResolver,
     styleRegistry: resources.styleRegistry,
+    fontLoader,
   });
   return rendered.svg;
 }

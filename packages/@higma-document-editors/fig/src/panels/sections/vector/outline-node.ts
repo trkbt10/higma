@@ -1,7 +1,7 @@
 /** @file Convert Kiwi shape nodes into explicit VECTOR path nodes. */
 
 import { getNodeType } from "@higma-document-models/fig/domain";
-import { NODE_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { NODE_TYPE_VALUES, toEnumValue } from "@higma-document-models/fig/constants";
 import type { FigNode, FigVectorPath } from "@higma-document-models/fig/types";
 
 const CIRCLE_KAPPA = 0.5522847498307936;
@@ -138,7 +138,7 @@ function outlineVectorPaths(node: FigNode): readonly FigVectorPath[] {
 export function outlineKiwiNode(node: FigNode): FigNode {
   return {
     ...node,
-    type: { value: NODE_TYPE_VALUES.VECTOR, name: "VECTOR" },
+    type: toEnumValue("VECTOR", NODE_TYPE_VALUES)!,
     name: getNodeType(node) === "VECTOR" ? node.name : `${node.name ?? getNodeType(node)} Outline`,
     vectorPaths: outlineVectorPaths(node),
     textData: undefined,

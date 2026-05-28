@@ -6,7 +6,7 @@ import {
   getNodeType,
   guidToString,
 } from "@higma-document-models/fig/domain";
-import { NODE_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { NODE_TYPE_VALUES, toEnumValue } from "@higma-document-models/fig/constants";
 import { nextPageGuid } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import {
@@ -24,7 +24,7 @@ function documentNode(): FigNode {
   return {
     guid: DOCUMENT_GUID,
     phase: { value: 0, name: "CREATED" },
-    type: { value: NODE_TYPE_VALUES.DOCUMENT, name: "DOCUMENT" },
+    type: toEnumValue("DOCUMENT", NODE_TYPE_VALUES)!,
   };
 }
 
@@ -39,7 +39,7 @@ function canvasNode(
     guid,
     parentIndex: { guid: documentGuid, position },
     phase: { value: 0, name: "CREATED" },
-    type: { value: NODE_TYPE_VALUES.CANVAS, name: "CANVAS" },
+    type: toEnumValue("CANVAS", NODE_TYPE_VALUES)!,
     name,
     backgroundColor: DEFAULT_PAGE_BACKGROUND,
     internalOnly,

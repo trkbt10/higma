@@ -42,6 +42,8 @@ type TextDataFields = Pick<FigNode,
   | "textAutoResize"
   | "textDecoration"
   | "textCase"
+  | "paragraphSpacing"
+  | "paragraphIndent"
 >;
 
 /**
@@ -130,9 +132,14 @@ function applyTextCase(characters: string, textCase: TextCase): string {
       return characters.replace(/\b\w/g, (c) => c.toUpperCase());
     case "SMALL_CAPS":
     case "SMALL_CAPS_FORCED":
-      // Small caps is an OpenType feature, not a simple text transform.
-      // For path rendering, uppercase is a reasonable approximation.
-      return characters.toUpperCase();
+      // True small-caps is an OpenType GSUB feature (`smcp` for
+      // lowercase, `c2sc` for SMALL_CAPS_FORCED uppercase). The path
+      // emitter consults `font.substituteGlyph` per character to
+      // honour it — we therefore preserve the source casing here so
+      // the emitter still has the original case info needed to pick
+      // between `smcp`, `c2sc`, and pass-through. The fallback when
+      // a font ships no GSUB entry happens at the per-glyph layer.
+      return characters;
     default:
       return characters;
   }
@@ -211,6 +218,12 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
     "NONE",
   );
 
+  // Paragraph-level spacing/indent. Read from textData first (the
+  // post-FigDocumentChange canonical home) with a flat-field fallback
+  // for builder-authored nodes that have not been re-indexed yet.
+  const paragraphSpacing = td?.paragraphSpacing ?? raw?.paragraphSpacing ?? 0;
+  const paragraphIndent = td?.paragraphIndent ?? raw?.paragraphIndent ?? 0;
+
   return {
     transform,
     characters: transformedCharacters,
@@ -225,5 +238,8 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
     textAutoResize,
     textDecoration,
     size,
+    paragraphSpacing,
+    paragraphIndent,
+    textCase,
   };
 }

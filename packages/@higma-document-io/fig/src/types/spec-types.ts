@@ -16,8 +16,10 @@ import type {
 } from "@higma-document-models/fig/types";
 import type {
   BlendMode,
+  BulletType,
   EffectType,
   LeadingTrim,
+  NumberUnits,
   TextAlignHorizontal,
   TextAlignVertical,
   TextAutoResize,
@@ -26,6 +28,39 @@ import type {
   TextTruncation,
 } from "@higma-document-models/fig/constants";
 import type { BooleanOperation } from "@higma-document-models/fig/boolean-operation";
+import type { FigFontName } from "@higma-document-models/fig/types";
+
+/**
+ * A scalar value paired with its unit. Used by `lineHeight` and
+ * `letterSpacing` on TEXT specs where the source units matter (Figma
+ * stores both, and `100% line-height` round-trips differently from
+ * the equivalent pixel value when the font size later changes).
+ *
+ * Spec authors that don't care about units can pass a bare `number`
+ * to `lineHeight` / `letterSpacing` — the factory treats that as
+ * `{ value, units: "PIXELS" }`. Pass the object form when the source
+ * (Figma file, CSS percent unit, …) authored the value as a percent.
+ */
+export type ValueWithUnits = {
+  readonly value: number;
+  readonly units: NumberUnits;
+};
+
+/**
+ * Per-character bullet/list metadata. Encoded into the on-disk
+ * `TextData.styleOverrideTable` with `bulletType` set on the
+ * matching styleID — Figma's bullet renderer reads that override to
+ * paint the leading glyph (●, 1., 2., …) for each line in the run.
+ *
+ * Spec authors describe a list with character ranges + bullet type;
+ * the factory weaves the runs into `characterStyleIDs` and emits the
+ * corresponding `styleOverrideTable` entries.
+ */
+export type BulletRunSpec = {
+  readonly start: number;
+  readonly end: number;
+  readonly bulletType: BulletType;
+};
 
 // =============================================================================
 // Paint / Effect specs
@@ -301,17 +336,62 @@ export type TextNodeSpec = BaseNodeSpec & {
   readonly fontSize?: number;
   readonly fontFamily?: string;
   readonly fontStyle?: string;
-  readonly lineHeight?: number;
   /**
-   * Tracking between glyphs, expressed in CSS pixels. The builder
-   * forwards this verbatim to Figma's `letterSpacing` field with unit
-   * `PIXELS` (Figma also supports `PERCENT`, but the web pipeline
-   * resolves CSS `letter-spacing` to its computed pixel value so the
-   * downstream surface is pixel-only). Defaults to `undefined`, which
-   * the builder reads as "leave the Figma default tracking" — distinct
-   * from `0`, which the builder explicitly serialises as zero pixels.
+   * Line height. Accepts either a bare `number` (treated as PIXELS)
+   * or `{ value, units: "PIXELS" | "PERCENT" }` when the source
+   * authored the value with explicit units. Figma stores both — a
+   * 150% line height round-trips differently from the equivalent
+   * pixel value when the font size later changes — so spec authors
+   * coming from CSS percent units should pass the object form.
    */
-  readonly letterSpacing?: number;
+  readonly lineHeight?: number | ValueWithUnits;
+  /**
+   * Tracking between glyphs. Accepts either a bare `number` (treated
+   * as PIXELS — the original CSS-letter-spacing surface) or
+   * `{ value, units: "PIXELS" | "PERCENT" }` for percent-authored
+   * sources. `undefined` means "leave the Figma default tracking" —
+   * distinct from `0`, which the builder explicitly serialises as
+   * zero pixels.
+   */
+  readonly letterSpacing?: number | ValueWithUnits;
+  /**
+   * Engine-level tracking (Kiwi `textTracking`) — a unit-less numeric
+   * adjust distinct from `letterSpacing`. Used by text-style
+   * definitions and preserved on TEXT nodes that carry it. Figma's
+   * editor shows this alongside letterSpacing under the same UI
+   * field but stores it separately on the wire format.
+   */
+  readonly textTracking?: number;
+  /**
+   * Font-fallback chain (Kiwi `TextData.fallbackFonts`). Each entry
+   * is a full `FigFontName` (family + style + postscript). Figma's
+   * renderer walks the chain when the primary `fontName` lacks a
+   * glyph for a character — pinning a CJK fallback after a Latin
+   * primary, for example, lets a mixed-script string render without
+   * tofu.
+   */
+  readonly fallbackFonts?: readonly FigFontName[];
+  /**
+   * Variable-font axis bindings. Each is a scalar applied to the
+   * matching variable axis on the primary `fontName`. Figma encodes
+   * these as separate top-level fields on the TEXT NodeChange:
+   * `variableFontSize` modulates size, `variableLineHeight` modulates
+   * line height, `variableLetterSpacing` modulates tracking. Used
+   * primarily by responsive-typography systems that drive axes from
+   * design tokens.
+   */
+  readonly variableFontSize?: number;
+  readonly variableLineHeight?: number;
+  readonly variableLetterSpacing?: number;
+  /**
+   * Per-character bullet/list runs. Each entry maps a half-open
+   * character range `[start, end)` to a `BulletType`. The factory
+   * weaves the runs into `textData.characterStyleIDs` and emits the
+   * matching `textData.styleOverrideTable` entries (with the
+   * `bulletType` override) — Figma's renderer reads those and paints
+   * the leading bullet glyph per line in the run.
+   */
+  readonly bulletRuns?: readonly BulletRunSpec[];
   /**
    * Horizontal text alignment. Spec takes the canonical string name
    * (`LEFT` / `CENTER` / `RIGHT` / `JUSTIFIED`); the factory looks up

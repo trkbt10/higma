@@ -30,6 +30,7 @@
 import type {
   FigFillGeometry,
   FigNode,
+  FigPaint,
   FigStrokeWeight,
   FigVectorPath,
   KiwiEnumValue,
@@ -42,6 +43,9 @@ import { synthesizeShapePath } from "./synth-shape";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
 import { el, flagProp, strProp } from "../../lib/jsx-tree/builder";
 import { firstSolidPaintCss } from "../../lib/css-format/paint";
+import type { ImageResolver } from "../style/paint";
+import { asImagePaint } from "@higma-document-models/fig/color";
+import type { FigImagePaint } from "@higma-document-models/fig/types";
 
 const VECTOR_NODE_TYPES: ReadonlySet<string> = new Set([
   "VECTOR",
@@ -159,6 +163,17 @@ export function isPureVectorSubtree(
   childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): boolean {
   if (isVectorShaped(node)) {
+    // IMAGE-filled vectors carry a raster paint that the merged-SVG
+    // collector cannot represent: a single <path fill="..."> can't
+    // reference per-path `<defs><pattern><image .../></...>` defs
+    // without each vector also contributing its own defs entry.
+    // Disqualifying them here pushes the vector through the
+    // per-node `emitVectorSvg` path that does emit the pattern defs,
+    // so the photos clipped into Figma background triangles
+    // actually render instead of becoming outline-only ghosts.
+    if (firstVisibleImagePaint(node.fillPaints) !== undefined) {
+      return false;
+    }
     return true;
   }
   if (!isPlainContainer(node)) {
@@ -348,6 +363,15 @@ export type VectorEmitInputs = {
   readonly source: FigDocumentContext;
   readonly index: TokenIndex;
   readonly childrenOf: FigKiwiDocumentIndex["childrenOf"];
+  /**
+   * Resolve an image paint to a public asset URL (typically
+   * `assets/<hash>.<ext>`). Threaded through so vectors with IMAGE
+   * fillPaints emit an `<svg><defs><pattern><image href="..."/></...>`
+   * structure instead of dropping the paint and rendering an outline
+   * only. Optional — callers that don't have one yet still get
+   * solid-only fills.
+   */
+  readonly imageResolver?: ImageResolver;
 };
 
 function strokeProps(
@@ -412,7 +436,17 @@ export function emitVectorSvg(
   // and clip the stroke. Pad the box and viewBox by the stroke width
   // so the rendered stroke survives — the same behaviour the
   // authoritative Figma SVG renderer relies on.
-  const fill = firstSolidPaintCss(node.fillPaints, inputs.index);
+  // IMAGE fill: Figma may paint the vector with a raster (e.g.
+  // photos clipped into the triangle background pattern on
+  // Desktop - 4). The TSX-side emitter previously only resolved
+  // solid fills and dropped IMAGE paints entirely. Detect an image
+  // paint up front and embed a `<defs><pattern><image .../></...>`
+  // so the path's `fill` reads the raster instead of going invisible.
+  const imagePaintRef = firstVisibleImagePaint(node.fillPaints);
+  const imageFillDef = imagePaintRef && inputs.imageResolver !== undefined
+    ? buildImageFillPattern(imagePaintRef, inputs.imageResolver, rawWidth, rawHeight, node.guid)
+    : undefined;
+  const fill = imageFillDef ? imageFillDef.fillRef : firstSolidPaintCss(node.fillPaints, inputs.index);
   const strokeFill = firstSolidPaintCss(node.strokePaints, inputs.index);
   const strokeWidth = maxStrokeWidth(node.strokeWeight);
   const dims = expandDegenerateBox(rawWidth, rawHeight, strokeWidth);
@@ -430,6 +464,10 @@ export function emitVectorSvg(
   const pathChildren: JsxNode[] = paths.map((p) =>
     renderPathElement(p, styling, fill, strokeFill, strokeWidth, dashes),
   );
+  const defsChildren: JsxNode[] = [];
+  if (imageFillDef) {
+    defsChildren.push(imageFillDef.defs);
+  }
 
   const viewBox = `${dims.viewBoxX} ${dims.viewBoxY} ${dims.viewBoxW} ${dims.viewBoxH}`;
   const svgProps: JsxProp[] = [
@@ -471,7 +509,134 @@ export function emitVectorSvg(
   }
   svgProps.push(strProp("xmlns", "http://www.w3.org/2000/svg"));
   svgProps.push(flagProp("aria-hidden"));
-  return el("svg", { props: svgProps, children: pathChildren, layout: "inline" });
+  const allChildren = defsChildren.length > 0
+    ? [el("defs", { props: [], children: defsChildren }), ...pathChildren]
+    : pathChildren;
+  return el("svg", { props: svgProps, children: allChildren, layout: "inline" });
+}
+
+function firstVisibleImagePaint(paints: readonly FigPaint[] | undefined): FigImagePaint | undefined {
+  if (!paints) {
+    return undefined;
+  }
+  for (const paint of paints) {
+    if (paint.visible === false) {
+      continue;
+    }
+    const image = asImagePaint(paint);
+    if (image !== undefined) {
+      return image;
+    }
+  }
+  return undefined;
+}
+
+function buildImageFillPattern(
+  image: FigImagePaint,
+  resolver: ImageResolver,
+  width: number,
+  height: number,
+  guid: { readonly sessionID: number; readonly localID: number },
+): { readonly defs: JsxNode; readonly fillRef: string } | undefined {
+  const src = resolver(image);
+  if (!src) {
+    return undefined;
+  }
+  const patternId = `vector-img-${guid.sessionID}-${guid.localID}`;
+  // Figma's SVG export pattern shape: `<pattern>` is in
+  // objectBoundingBox space (width=height=1). Inside, the
+  // `<image>` is placed at natural pixel dimensions and scaled
+  // down by 1/imageWidth × 1/imageHeight via the matrix so the
+  // image's far corner lands at (1, 1). When `imageScaleMode` is
+  // FILL, we centre-crop the image into the path's bbox; this is
+  // expressed by adjusting the scale so the shorter axis covers
+  // 1.0 and the longer axis overflows, then centring the
+  // overflow via the matrix `tx, ty`.
+  // `originalImageWidth` / `originalImageHeight` are populated by
+  // Figma's exporter on IMAGE paints but not declared on the
+  // `FigImagePaint` type (the Kiwi schema treats them as
+  // editor-only side-channel). Cast to read the runtime fields.
+  const extras = image as unknown as { readonly originalImageWidth?: number; readonly originalImageHeight?: number };
+  const origW = extras.originalImageWidth ?? 0;
+  const origH = extras.originalImageHeight ?? 0;
+  let imgEl: JsxNode;
+  if (origW > 0 && origH > 0 && width > 0 && height > 0) {
+    const scaleMode = (image as unknown as { readonly imageScaleMode?: { readonly name?: string } }).imageScaleMode?.name;
+    // Path bbox aspect (units in pattern objectBoundingBox space
+    // = path bbox width / height ratio).
+    const bboxAspect = width / height;
+    const imgAspect = origW / origH;
+    let sx: number;
+    let sy: number;
+    let tx = 0;
+    let ty = 0;
+    if (scaleMode === "FILL" || scaleMode === undefined) {
+      // FILL = cover. Image must overflow on whichever axis has
+      // a larger image-aspect-to-bbox ratio mismatch.
+      if (imgAspect > bboxAspect) {
+        // Image is wider; vertical axis fills, horizontal overflows.
+        sy = 1 / origH;
+        sx = (height / width) * (1 / origH);
+        // Centre horizontally: overflow = total image width - 1.
+        const overflow = sx * origW - 1;
+        tx = -overflow / 2;
+      } else {
+        sx = 1 / origW;
+        sy = (width / height) * (1 / origW);
+        const overflow = sy * origH - 1;
+        ty = -overflow / 2;
+      }
+    } else if (scaleMode === "FIT") {
+      if (imgAspect > bboxAspect) {
+        sx = 1 / origW;
+        sy = (width / height) * (1 / origW);
+        const remaining = 1 - sy * origH;
+        ty = remaining / 2;
+      } else {
+        sy = 1 / origH;
+        sx = (height / width) * (1 / origH);
+        const remaining = 1 - sx * origW;
+        tx = remaining / 2;
+      }
+    } else {
+      // STRETCH / CROP / TILE — fall back to a simple stretch (Figma
+      // STRETCH paints exactly this). CROP / TILE deserve their own
+      // handling and currently fall through to stretch as a
+      // graceful approximation.
+      sx = 1 / origW;
+      sy = 1 / origH;
+    }
+    const matrix = `matrix(${sx} 0 0 ${sy} ${tx} ${ty})`;
+    imgEl = el("image", {
+      props: [
+        strProp("href", src),
+        strProp("width", String(origW)),
+        strProp("height", String(origH)),
+        strProp("transform", matrix),
+        strProp("preserveAspectRatio", "none"),
+      ],
+    });
+  } else {
+    imgEl = el("image", {
+      props: [
+        strProp("href", src),
+        strProp("width", "1"),
+        strProp("height", "1"),
+        strProp("preserveAspectRatio", "xMidYMid slice"),
+      ],
+    });
+  }
+  const pattern = el("pattern", {
+    props: [
+      strProp("id", patternId),
+      strProp("patternContentUnits", "objectBoundingBox"),
+      strProp("patternUnits", "objectBoundingBox"),
+      strProp("width", "1"),
+      strProp("height", "1"),
+    ],
+    children: [imgEl],
+  });
+  return { defs: pattern, fillRef: `url(#${patternId})` };
 }
 
 type SvgStyling = {
@@ -595,6 +760,16 @@ type ComposedPath = {
   readonly strokeWidth: number | undefined;
   readonly strokeDashes: readonly number[] | undefined;
   /**
+   * Figma's `strokeAlign` (`INSIDE` / `OUTSIDE` / `CENTER`). SVG's
+   * native stroke is centred on the path edge and there is no
+   * cross-browser CSS toggle, so when emitting an INSIDE stroke we
+   * double the stroke-width and clip the path to itself; the outer
+   * half of the doubled stroke gets clipped away, leaving 1× width
+   * visible inside the path. Without this the strokes render as
+   * thin half-pixel anti-alias slivers in the React preview.
+   */
+  readonly strokeAlign?: "INSIDE" | "OUTSIDE" | "CENTER";
+  /**
    * `"stroke"` when the geometry came from `strokeGeometry` — the
    * outline is already widened, so we paint it with the stroke
    * colour as a fill and skip the SVG `stroke` attribute (otherwise
@@ -681,6 +856,7 @@ function collectVectorPaths(
   const stroke = firstSolidPaintCss(node.strokePaints, index);
   const strokeWidth = maxStrokeWidth(node.strokeWeight);
   const strokeDashes = strokeDashesFor(node);
+  const strokeAlign = readStrokeAlign(node);
   return paths.map((p) => ({
     d: p.d,
     rule: p.rule,
@@ -688,9 +864,18 @@ function collectVectorPaths(
     stroke,
     strokeWidth,
     strokeDashes,
+    strokeAlign,
     source: p.source ?? "fill",
     matrix,
   }));
+}
+
+function readStrokeAlign(node: FigNode): "INSIDE" | "OUTSIDE" | "CENTER" | undefined {
+  const name = (node as { readonly strokeAlign?: { readonly name?: string } }).strokeAlign?.name;
+  if (name === "INSIDE" || name === "OUTSIDE" || name === "CENTER") {
+    return name;
+  }
+  return undefined;
 }
 
 function collectDescendantPaths(container: FigNode, inputs: VectorEmitInputs): readonly ComposedPath[] {
@@ -778,12 +963,71 @@ export function emitMergedVectorSvg(
     return undefined;
   }
   const viewBox = `0 0 ${width} ${height}`;
-  const pathChildren: JsxNode[] = paths.map((p) => el("path", { props: [strProp("d", p.d), ...pathPropsFor(p)] }));
+  // Generate clipPaths for paths whose Figma stroke-align is INSIDE
+  // (Figma's default for new shapes; the chess-pattern triangles on
+  // Desktop - 4 use it). The doubled-stroke trick paints 2× the
+  // authored width centred on the path; clipping to the path's own
+  // outline hides the outer half, leaving 1× width visible inside —
+  // exactly Figma's authored stroke placement. Without this, the
+  // strokes paint half outside the path and render as washed-out
+  // hairlines at sub-pixel positions.
+  const defs: JsxNode[] = [];
+  const pathChildren: JsxNode[] = [];
+  for (let i = 0; i < paths.length; i++) {
+    const p = paths[i]!;
+    if (p.source === "fill" && p.stroke && p.strokeWidth && p.strokeAlign === "INSIDE") {
+      const clipId = `inside-stroke-${i}`;
+      // INSIDE stroke trick: emit a `<clipPath>` whose body is the
+      // same path geometry (and SAME transform) as the consumer,
+      // wrap the painted path in a `<g clip-path="url(#...)">` so
+      // SVG applies the consumer's transform exactly once to both
+      // the stroke and the clip. The doubled stroke-width paints
+      // 1× outside / 1× inside; the clipPath hides the outside
+      // half, so 1× width is visible inside — matching Figma's
+      // `strokeAlign: INSIDE`.
+      defs.push(el("clipPath", { props: [strProp("id", clipId)], children: [el("path", { props: [strProp("d", p.d), ...transformProps(p)] })] }));
+      const insideStrokeNode = el("g", { props: [strProp("clip-path", `url(#${clipId})`)], children: [el("path", { props: [strProp("d", p.d), ...pathPropsForInsideStroke(p)] })] });
+      pathChildren.push(insideStrokeNode);
+      continue;
+    }
+    pathChildren.push(el("path", { props: [strProp("d", p.d), ...pathPropsFor(p)] }));
+  }
+  const svgChildren = defs.length > 0
+    ? [el("defs", { props: [], children: defs }), ...pathChildren]
+    : pathChildren;
   const svgProps: JsxProp[] = [
     ...wrapperProps,
     strProp("viewBox", viewBox),
     strProp("xmlns", "http://www.w3.org/2000/svg"),
     flagProp("aria-hidden"),
   ];
-  return el("svg", { props: svgProps, children: pathChildren, layout: "inline" });
+  return el("svg", { props: svgProps, children: svgChildren, layout: "inline" });
+}
+
+function transformProps(p: ComposedPath): readonly JsxProp[] {
+  const matrix = matrixProp(p.matrix);
+  return matrix ? [matrix] : [];
+}
+
+function pathPropsForInsideStroke(p: ComposedPath): readonly JsxProp[] {
+  const out: JsxProp[] = [];
+  out.push(strProp("fill", p.fill ?? "none"));
+  if (p.stroke !== undefined && p.strokeWidth !== undefined && p.strokeWidth > 0) {
+    out.push(strProp("stroke", p.stroke));
+    // Doubled width so the half hidden by the wrapping clip leaves
+    // 1× width visible inside the authored shape.
+    out.push(strProp("stroke-width", String(p.strokeWidth * 2)));
+    if (p.strokeDashes && p.strokeDashes.length > 0) {
+      out.push(strProp("stroke-dasharray", p.strokeDashes.join(" ")));
+    }
+  }
+  const winding = windingRuleProp(p.rule);
+  if (winding) {
+    out.push(winding);
+  }
+  const matrix = matrixProp(p.matrix);
+  if (matrix) {
+    out.push(matrix);
+  }
+  return out;
 }

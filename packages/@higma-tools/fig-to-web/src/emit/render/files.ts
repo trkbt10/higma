@@ -24,6 +24,7 @@
  * regenerating the same fig produces byte-identical output.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
+import { guidToString } from "@higma-document-models/fig/domain";
 import type { ComponentPropDecl, ComponentTarget, EmitFile, EmitRegistry, FrameTarget } from "../types";
 import type { EmitContext } from "./jsx";
 import { emitFrameJsx } from "./jsx";
@@ -32,6 +33,7 @@ import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import type { ImageResolver } from "../style/paint";
 import type { PropBindings } from "../plan/prop-bindings";
 import { buildPropBindings } from "../plan/prop-bindings";
+import { collectAuthoredTextOverridesByGuid } from "../plan/registry";
 import { buildReparentResult } from "../layout/reparent";
 import { applyRowClustering } from "../layout/cluster";
 import { serialize as serializeJsx } from "../../lib/jsx-tree/serialize";
@@ -144,12 +146,18 @@ function makeContext(
   propBindings: PropBindings,
   rootNode: FigNode,
 ): EmitContext {
+  const overrides = collectAuthoredTextOverridesByGuid(source, rootNode);
+  const distinctCount = new Map<string, number>();
+  for (const [key, values] of overrides) {
+    distinctCount.set(key, values.size);
+  }
   return {
     source,
     registry,
     index,
     imageResolver: opts.imageResolver,
     emittingFile,
+    emittingRootGuid: guidToString(rootNode.guid),
     imports: new Map(),
     debugAttrs: opts.debugAttrs,
     propBindings,
@@ -157,6 +165,7 @@ function makeContext(
     iconRegistry: opts.iconRegistry,
     assetStrategy: opts.assetStrategy,
     assetComplexityThreshold: opts.assetComplexityThreshold,
+    authoredTextOverrideDistinctValueCount: distinctCount,
   };
 }
 
@@ -754,7 +763,7 @@ export function emitComponentFile(
   // target's typed props. The JSX emitter consults this when rendering
   // each TEXT node so a `componentPropRefs(TEXT_DATA)` slot reads
   // `{label}` instead of the SYMBOL-default literal.
-  const bindings = buildPropBindings(target, source.document.childrenOf);
+  const bindings = buildPropBindings(target, source.document);
   const context = makeContext(source, registry, index, target.filePath, opts, bindings, target.node);
   const isVariantSet = target.variants.size > 0;
 

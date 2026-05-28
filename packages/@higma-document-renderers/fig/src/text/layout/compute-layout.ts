@@ -297,6 +297,38 @@ function resolveLineBaselineY(line: LineWithParagraph, defaultY: number): number
 }
 
 /**
+ * Per-line `(dx, dy)` adjustments produced by `paragraphSpacing` and
+ * `paragraphIndent`.
+ *
+ * `dy` accumulates `paragraphSpacing` once at every paragraph boundary
+ * — every line at or after that boundary inherits the shift. `dx`
+ * applies `paragraphIndent` to the FIRST visual line of every
+ * paragraph other than the leading one; subsequent (wrapped) lines of
+ * the same paragraph stay flush.
+ */
+function computeParagraphOffsets(
+  lines: readonly LineWithParagraph[],
+  paragraphSpacing: number,
+  paragraphIndent: number,
+): readonly { readonly dx: number; readonly dy: number }[] {
+  const offsets: { dx: number; dy: number }[] = [];
+  const state = { previousParagraph: -1, accumulatedDy: 0 };
+  for (const line of lines) {
+    const isParagraphBoundary = line.paragraphIndex !== state.previousParagraph;
+    if (isParagraphBoundary && state.previousParagraph !== -1) {
+      state.accumulatedDy += paragraphSpacing;
+    }
+    const isFirstLineOfNonLeadingParagraph = isParagraphBoundary && line.paragraphIndex > 0;
+    offsets.push({
+      dx: isFirstLineOfNonLeadingParagraph ? paragraphIndent : 0,
+      dy: state.accumulatedDy,
+    });
+    state.previousParagraph = line.paragraphIndex;
+  }
+  return offsets;
+}
+
+/**
  * Compute text layout from extracted properties
  *
  * This function determines the position of each text line based on
@@ -338,18 +370,40 @@ export function computeTextLayout(options: ComputeLayoutOptions): TextLayout {
     descenderRatio,
   });
 
+  // Paragraph-level offsets:
+  //  - `paragraphSpacing` is inserted ONCE at every paragraph boundary
+  //    (the line where `paragraphIndex` increments). Accumulated into
+  //    `verticalAcc` so all subsequent lines inherit the shift.
+  //  - `paragraphIndent` is added to the x-anchor of the FIRST line of
+  //    every paragraph EXCEPT the first. Figma's editor places the
+  //    leading paragraph flush with the text-box left edge; only the
+  //    paragraphs that follow a `\n` get the first-line indent.
+  // Both fields are only meaningful for LEFT-aligned text — for
+  // CENTER/RIGHT alignment Figma keeps the visual anchor unchanged.
+  const indentEnabled = props.textAlignHorizontal === "LEFT";
+  const paragraphOffsets = computeParagraphOffsets(
+    linesWithParagraph,
+    props.paragraphSpacing,
+    indentEnabled ? props.paragraphIndent : 0,
+  );
+
   // Build laid-out lines
-  const lines: LayoutLine[] = linesWithParagraph.map((lwp, index) => ({
-    text: lwp.text,
-    x: resolveLineAnchorX(lwp, x, props.textAlignHorizontal),
-    y: resolveLineBaselineY(lwp, baseY + index * lineHeight),
-    index,
-    paragraphIndex: lwp.paragraphIndex,
-    sourceStart: lwp.sourceStart,
-    sourceEnd: lwp.sourceEnd,
-    width: lwp.width,
-    charWidths: lwp.charWidths,
-  }));
+  const lines: LayoutLine[] = linesWithParagraph.map((lwp, index) => {
+    const offset = paragraphOffsets[index];
+    const anchor = resolveLineAnchorX(lwp, x, props.textAlignHorizontal);
+    const baseline = resolveLineBaselineY(lwp, baseY + index * lineHeight);
+    return {
+      text: lwp.text,
+      x: anchor + offset.dx,
+      y: baseline + offset.dy,
+      index,
+      paragraphIndex: lwp.paragraphIndex,
+      sourceStart: lwp.sourceStart,
+      sourceEnd: lwp.sourceEnd,
+      width: lwp.width,
+      charWidths: lwp.charWidths,
+    };
+  });
 
   return {
     lines,

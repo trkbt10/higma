@@ -1,6 +1,7 @@
 /** @file NodeSpec to Kiwi FigNode construction. */
 
-import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import type { FigGuid, FigMatrix, FigNode, FigNodeType } from "@higma-document-models/fig/types";
+import { applyNodeTypeDefaults } from "@higma-document-models/fig/node-factory";
 import { BOOLEAN_OPERATION_VALUES } from "@higma-document-models/fig/boolean-operation";
 import {
   LEADING_TRIM_VALUES,
@@ -62,18 +63,35 @@ function createTransform(x: number, y: number, rotation?: number): FigMatrix {
   };
 }
 
+/**
+ * Lift a scalar-or-units spec value to the wire-format
+ * `FigValueWithUnits`. Bare `number` inputs are treated as PIXELS
+ * (back-compat with the original number-only spec surface); the
+ * object form passes through with its declared units.
+ */
+function liftValueWithUnits(
+  input: number | { readonly value: number; readonly units: "RAW" | "PIXELS" | "PERCENT" },
+): { readonly value: number; readonly units: { readonly name: "RAW" | "PIXELS" | "PERCENT"; readonly value: number } } {
+  if (typeof input === "number") {
+    return { value: input, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
+  }
+  return { value: input.value, units: { name: input.units, value: NUMBER_UNITS_VALUES[input.units] } };
+}
+
 function textLineHeightSpec(spec: TextNodeSpec): NonNullable<FigNode["lineHeight"]> {
   if (spec.lineHeight === undefined) {
     throw new Error("createNodeFromSpec: TEXT spec requires explicit lineHeight");
   }
-  return { value: spec.lineHeight, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
+  return liftValueWithUnits(spec.lineHeight);
 }
 
-function textLetterSpacingSpec(letterSpacing: number | undefined): FigNode["letterSpacing"] {
+function textLetterSpacingSpec(
+  letterSpacing: number | { readonly value: number; readonly units: "RAW" | "PIXELS" | "PERCENT" } | undefined,
+): FigNode["letterSpacing"] {
   if (letterSpacing === undefined) {
     return undefined;
   }
-  return { value: letterSpacing, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
+  return liftValueWithUnits(letterSpacing);
 }
 
 function requiredTextFontSize(spec: TextNodeSpec): number {
@@ -129,11 +147,30 @@ function baseNode(options: CreateNodeFromSpecOptions): FigNode {
 }
 
 /**
+ * Apply the per-NodeType load-bearing defaults from
+ * `@higma-document-models/fig/node-factory.applyNodeTypeDefaults` —
+ * `strokeWeight` / `strokeAlign` / `strokeJoin` / `frameMaskDisabled`
+ * / etc. Real Figma exports always carry these even when no stroke
+ * is authored (a stroke-less RECTANGLE still writes `strokeWeight=0`,
+ * `strokeAlign=CENTER`, `strokeJoin=MITER`); a fixture that omits
+ * them fails the Figma import on every shape, the editor opens the
+ * file with the shape invisible, and the round-trip spec measures
+ * garbage. The helper mutates a copy of the projected node so the
+ * caller's switch arm sees the same shape as a real-export node.
+ */
+function withTypeDefaults(node: FigNode, type: FigNodeType): FigNode {
+  const draft = { ...node } as Record<string, unknown>;
+  applyNodeTypeDefaults(draft, type);
+  return draft as FigNode;
+}
+
+/**
  * Convert an explicit node spec into a Kiwi FigNode.
  */
 export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode {
   assertCreateNodeFromSpecOptions(options);
-  const node = baseNode(options);
+  const rawBase = baseNode(options);
+  const node = withTypeDefaults(rawBase, options.spec.type);
   const spec = options.spec;
   switch (spec.type) {
     case "FRAME":
@@ -199,6 +236,18 @@ export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode 
       const textCase = toEnumValue(spec.textCase, TEXT_CASE_VALUES);
       const textDecoration = toEnumValue(spec.textDecoration, TEXT_DECORATION_VALUES);
       const textAutoResize = toEnumValue(spec.textAutoResize, TEXT_AUTO_RESIZE_VALUES);
+      // textCase / textDecoration / textAutoResize / textTruncation /
+      // leadingTrim are top-level `NodeChange` fields in
+      // `figma-schema.json` (typeIds 11, 12, 30, 31, 14), NOT
+      // `TextData` fields. Writing them under `textData.*` makes them
+      // disappear at Kiwi serialise time — the schema does not declare
+      // them on the TextData message, so encoder drops them silently
+      // and Figma reads the on-disk node with no styling override
+      // applied. The TS `FigKiwiTextData` type carries them only as a
+      // historical convenience for reader code that mirrors the
+      // top-level fields into the text payload; on the WRITE side they
+      // belong at the node level so the .fig round-trips through Figma
+      // with the styling honoured.
       return {
         ...node,
         fontSize,
@@ -209,22 +258,18 @@ export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode 
         leadingTrim,
         paragraphSpacing: spec.paragraphSpacing,
         paragraphIndent: spec.paragraphIndent,
+        textCase,
+        textDecoration,
+        textAutoResize,
+        textAlignHorizontal: toEnumValue(spec.textAlignHorizontal, TEXT_ALIGN_H_VALUES),
+        textAlignVertical: toEnumValue(spec.textAlignVertical, TEXT_ALIGN_V_VALUES),
         textData: {
           characters: spec.characters,
           fontSize,
           fontName,
           lineHeight,
           letterSpacing,
-          textTruncation,
-          leadingTrim,
-          paragraphSpacing: spec.paragraphSpacing,
-          paragraphIndent: spec.paragraphIndent,
-          textCase,
-          textDecoration,
-          textAutoResize,
         },
-        textAlignHorizontal: toEnumValue(spec.textAlignHorizontal, TEXT_ALIGN_H_VALUES),
-        textAlignVertical: toEnumValue(spec.textAlignVertical, TEXT_ALIGN_V_VALUES),
       };
     }
     case "INSTANCE":

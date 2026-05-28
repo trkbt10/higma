@@ -22,8 +22,18 @@
  * into a `variant` prop with a string-union type. Other props on the
  * set (TEXT / BOOL / NUMBER / etc.) become typed props.
  */
-import type { FigNode, FigComponentPropDef, FigVariantPropSpec } from "@higma-document-models/fig/types";
-import { findNodeByGuid, getNodeType, guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import type {
+  FigNode,
+  FigComponentPropDef,
+  FigVariantPropSpec,
+  FigKiwiSymbolOverride,
+} from "@higma-document-models/fig/types";
+import {
+  findNodeByGuid,
+  getNodeType,
+  guidToString,
+  type FigKiwiDocumentIndex,
+} from "@higma-document-models/fig/domain";
 import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import type { ComponentPropDecl, ComponentTarget, EmitRegistry, FrameTarget } from "../types";
 import type { FigDocumentContext } from "@higma-document-io/fig/context";
@@ -165,6 +175,7 @@ function buildVariantMap(source: FigDocumentContext, target: FigNode): ReadonlyM
 }
 
 export const SYNTHETIC_TEXT_PREFIX = "synthetic-text:";
+export const SYNTHETIC_VARIANT_PREFIX = "synthetic-variant:";
 
 /**
  * Build the JS identifier used as the React prop name for a
@@ -174,6 +185,10 @@ export const SYNTHETIC_TEXT_PREFIX = "synthetic-text:";
  */
 export function syntheticTextPropName(guidStr: string): string {
   return `text_${guidStr.replace(":", "_")}`;
+}
+
+export function syntheticVariantPropName(guidStr: string): string {
+  return `variant_${guidStr.replace(":", "_")}`;
 }
 
 /**
@@ -207,9 +222,9 @@ function augmentWithImplicitTextProps(
   // that happen to share a value (Figma allows two SYMBOLs with
   // value "Default" inside one set; both contribute distinct TEXT
   // descendants the INSTANCE may want to override).
-  const roots: readonly FigNode[] =
-    variants.size === 0 ? [target] : [...findVariantChildren(source, target)];
+  const roots: readonly FigNode[] = variants.size === 0 ? [target] : [...findVariantChildren(source, target)];
   for (const root of roots) {
+    const overrideChars = collectAuthoredTextOverridesByGuid(source, root);
     visitTextDescendants(source, root, (text) => {
       const guidStr = guidToString(text.guid);
       if (seen.has(guidStr)) {
@@ -220,7 +235,9 @@ function augmentWithImplicitTextProps(
       if (declared.has(defId)) {
         return;
       }
-      const characters = readTextCharacters(text);
+      const overrideSet = overrideChars.get(guidStr);
+      const firstOverride = overrideSet ? overrideSet.values().next().value : undefined;
+      const characters = firstOverride ?? readTextCharacters(text);
       out.push({
         kind: "string",
         name: syntheticTextPropName(guidStr),
@@ -232,12 +249,476 @@ function augmentWithImplicitTextProps(
   return out;
 }
 
+/**
+ * Index, by inner-descendant guid, the textData overrides authored
+ * on every INSTANCE descendant of `root`. Each guid is recorded
+ * with the set of distinct override characters that the SYMBOL
+ * body's authors wrote for it. Used by both:
+ *
+ *   - prop-default selection (registry): if exactly one distinct
+ *     value, that is the SYMBOL's authored default for the prop.
+ *   - sibling-distinct detection (jsx emit): when more than one
+ *     distinct value exists, the SYMBOL body's sibling INSTANCEs
+ *     are intentionally different and the inner-INSTANCE call sites
+ *     must bake the literal each, instead of forwarding a single
+ *     outer prop that cannot represent more than one value at once.
+ */
+export function collectAuthoredTextOverridesByGuid(
+  source: FigDocumentContext,
+  root: FigNode,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const out = new Map<string, Set<string>>();
+  // First pass: collect every authored textData override, keyed by
+  // the *resolved* TEXT descendant's guid (not the raw guidPath
+  // last entry — Figma may write a stale/external guid there when
+  // the override's slot was inherited from a different session, and
+  // the resolver's payload-matching fallback substitutes the
+  // SYMBOL's actual TEXT descendant at runtime). Without re-keying
+  // here, the registry's distinct-value counter and the JSX emitter
+  // both lose visibility into the override and treat the call site
+  // as if it never wrote anything.
+  function recordOverrideForInstance(instance: FigNode, override: FigKiwiSymbolOverride): void {
+    const guids = override.guidPath?.guids;
+    if (!guids || guids.length === 0) {
+      return;
+    }
+    const td = (override as { readonly textData?: { readonly characters?: unknown } }).textData;
+    const characters = typeof td?.characters === "string" ? td.characters : undefined;
+    if (characters === undefined) {
+      return;
+    }
+    const targetGuidStr = resolveOverrideTextTargetGuid(instance, override, source);
+    if (targetGuidStr === undefined) {
+      return;
+    }
+    const set = out.get(targetGuidStr) ?? new Set<string>();
+    set.add(characters);
+    out.set(targetGuidStr, set);
+  }
+  function visit(node: FigNode): void {
+    if (node.type?.name === "INSTANCE") {
+      const overrides = node.symbolData?.symbolOverrides ?? [];
+      for (const override of overrides) {
+        recordOverrideForInstance(node, override);
+      }
+    }
+    for (const child of source.document.childrenOf(node)) {
+      visit(child);
+    }
+  }
+  visit(root);
+  // Second pass: when a SYMBOL body has multiple sibling INSTANCEs
+  // that all reach the same TEXT guid through their resolution
+  // (different `symbolOverrides[].guidPath[0]`s, same final guid)
+  // and only SOME of them override the descendant, the un-overridden
+  // siblings still render the SYMBOL default. Include that default
+  // in the distinct-value set so the emitter's call-site decision
+  // (forward outer prop vs. bake literal) sees the real value
+  // diversity. Without it, two siblings — one rendered as
+  // "よくある質問" (default), one overridden to "お問い合わせ" —
+  // look identical to one with a single override, and the
+  // forwarding path collapses both to a single outer prop.
+  collectImpliedDefaultsForOverriddenSiblings(source, root, out);
+  return out;
+}
+
+function collectImpliedDefaultsForOverriddenSiblings(
+  source: FigDocumentContext,
+  root: FigNode,
+  out: Map<string, Set<string>>,
+): void {
+  function visit(node: FigNode): void {
+    const children = source.document.childrenOf(node);
+    // For each container, group its direct INSTANCE children by
+    // their referenced symbolID. Within each group, if at least
+    // one sibling overrides a TEXT and another doesn't, the
+    // un-overriding sibling renders the SYMBOL default for that
+    // TEXT; that default is also a real authored value to track.
+    const groups = new Map<string, FigNode[]>();
+    for (const child of children) {
+      if (child.type?.name !== "INSTANCE") {
+        continue;
+      }
+      const sid = child.symbolData?.symbolID;
+      if (!sid) {
+        continue;
+      }
+      const key = guidToString(sid);
+      const arr = groups.get(key) ?? [];
+      arr.push(child);
+      groups.set(key, arr);
+    }
+    for (const [, siblings] of groups) {
+      if (siblings.length < 2) {
+        continue;
+      }
+      const overriddenGuids = new Set<string>();
+      // Per-sibling map keyed by resolved TEXT guid → did this
+      // sibling actually authore the override at runtime. Needed
+      // below so the no-override siblings get their resolved
+      // SYMBOL-default characters added to the distinct set.
+      const overrideByInstance = new Map<FigNode, Set<string>>();
+      for (const inst of siblings) {
+        const overrides = inst.symbolData?.symbolOverrides ?? [];
+        const set = new Set<string>();
+        for (const override of overrides) {
+          const td = (override as { readonly textData?: { readonly characters?: unknown } }).textData;
+          if (typeof td?.characters !== "string") {
+            continue;
+          }
+          const targetGuidStr = resolveOverrideTextTargetGuid(inst, override, source);
+          if (targetGuidStr === undefined) {
+            continue;
+          }
+          overriddenGuids.add(targetGuidStr);
+          set.add(targetGuidStr);
+        }
+        overrideByInstance.set(inst, set);
+      }
+      for (const guidStr of overriddenGuids) {
+        for (const inst of siblings) {
+          const siblingOverrides = overrideByInstance.get(inst);
+          if (siblingOverrides?.has(guidStr) === true) {
+            continue;
+          }
+          // This sibling does not override the guid; record the
+          // resolved SYMBOL default for it. Resolution may fail
+          // for external library references — skip silently in
+          // that case (the explicit overrides already capture
+          // whatever distinct values exist among siblings).
+          try {
+            const resolved = source.symbolResolver.resolveInstance(inst);
+            const defaultChars = findResolvedTextCharacters(resolved.children, guidStr, source);
+            if (defaultChars !== undefined) {
+              const set = out.get(guidStr) ?? new Set<string>();
+              set.add(defaultChars);
+              out.set(guidStr, set);
+            }
+          } catch {
+            // ignore unresolvable references
+          }
+        }
+      }
+    }
+    for (const child of children) {
+      visit(child);
+    }
+  }
+  visit(root);
+}
+
+/**
+ * Resolve the SYMBOL-relative target of a textData override to the
+ * guid of the TEXT descendant the resolver actually applies it to.
+ *
+ * The override's `guidPath` typically names the SYMBOL author's
+ * own descendant guids, but a .fig may carry stale paths (e.g. when
+ * a SYMBOL slot was inherited from another file the path stores
+ * that file's session id and our SYMBOL body's TEXT has a different
+ * guid). The resolver's payload-matching fallback substitutes the
+ * SYMBOL's actual TEXT at runtime; this helper mirrors that
+ * substitution so registry collectors key by the same guid the
+ * runtime resolver will write into.
+ */
+function resolveOverrideTextTargetGuid(
+  instance: FigNode,
+  override: FigKiwiSymbolOverride,
+  source: FigDocumentContext,
+): string | undefined {
+  const guids = override.guidPath?.guids;
+  if (!guids || guids.length === 0) {
+    return undefined;
+  }
+  const lastGuid = guids[guids.length - 1];
+  if (!lastGuid) {
+    return undefined;
+  }
+  const lastKey = guidToString(lastGuid);
+  // Fast path: the literal path-tail guid exists somewhere reachable
+  // from this INSTANCE's SYMBOL body. The resolver's normal binding
+  // path applies and the override keyed off this guid will surface
+  // through `propBindings` and `appendResolvedTextProps` naturally.
+  if (source.document.nodesByGuid.has(lastKey)) {
+    return lastKey;
+  }
+  // Slow path: the path points at a stale/foreign guid. Resolve the
+  // INSTANCE and search for the TEXT descendant whose characters now
+  // equal the override's payload — that is the slot the resolver
+  // substituted. If exactly one resolved TEXT matches, key by it; if
+  // ambiguous or unfound, return undefined and let the override
+  // silently drop (the registry's behaviour pre-fix).
+  const incomingChars = (override as { readonly textData?: { readonly characters?: unknown } }).textData?.characters;
+  if (typeof incomingChars !== "string") {
+    return undefined;
+  }
+  try {
+    const resolved = source.symbolResolver.resolveInstance(instance);
+    const matches: string[] = [];
+    function visit(nodes: readonly FigNode[]): void {
+      for (const node of nodes) {
+        if (node.type?.name === "TEXT") {
+          const chars = (node as { readonly textData?: { readonly characters?: string } }).textData?.characters;
+          if (chars === incomingChars) {
+            matches.push(guidToString(node.guid));
+          }
+        }
+        const direct = source.symbolResolver.childrenOfResolvedNode(node);
+        if (direct.length > 0) {
+          visit(direct);
+        }
+      }
+    }
+    visit(resolved.children);
+    if (matches.length === 1) {
+      return matches[0];
+    }
+  } catch {
+    // ignore unresolvable references
+  }
+  return undefined;
+}
+
+function findResolvedTextCharacters(
+  roots: readonly FigNode[],
+  guidStr: string,
+  source: FigDocumentContext,
+  visitedInstances: Set<string> = new Set(),
+): string | undefined {
+  for (const node of roots) {
+    if (node.type?.name === "TEXT" && guidToString(node.guid) === guidStr) {
+      const td = (node as { readonly textData?: { readonly characters?: string } }).textData;
+      if (typeof td?.characters === "string") {
+        return td.characters;
+      }
+    }
+    // The resolver does not attach a `.children` array; walk via the
+    // resolver-aware method instead. Materialised INSTANCEs sit at the
+    // boundary of their own resolved subtree — re-resolve to descend
+    // through them and reach descendants the override targets.
+    const direct = source.symbolResolver.childrenOfResolvedNode(node);
+    if (direct.length > 0) {
+      const inner = findResolvedTextCharacters(direct, guidStr, source, visitedInstances);
+      if (inner !== undefined) {
+        return inner;
+      }
+    }
+    if (node.type?.name === "INSTANCE") {
+      const key = guidToString(node.guid);
+      if (visitedInstances.has(key)) {
+        continue;
+      }
+      visitedInstances.add(key);
+      try {
+        const inner = source.symbolResolver.resolveInstance(node);
+        const found = findResolvedTextCharacters(inner.children, guidStr, source, visitedInstances);
+        if (found !== undefined) {
+          return found;
+        }
+      } catch {
+        // ignore unresolvable references
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * For every INSTANCE descendant of `target` whose referenced SYMBOL
+ * belongs to a Variant Set, expose a synthetic variant prop on the
+ * outer component so call sites can swap the inner INSTANCE's
+ * variant. Figma authors do this with `overriddenSymbolID` overrides
+ * on the OUTER INSTANCE (e.g. footer's icon-item INSTANCE swaps the
+ * inner BigIcons from "howto" → "FAQ"); without a corresponding
+ * React prop, IconItem can only render its SYMBOL-author default
+ * variant.
+ *
+ * Prop default = the variant value the SYMBOL author originally
+ * selected (computed from the inner INSTANCE's `symbolID`).
+ */
+function augmentWithImplicitVariantProps(
+  source: FigDocumentContext,
+  base: readonly ComponentPropDecl[],
+  target: FigNode,
+  variants: ReadonlyMap<string, FigNode>,
+  documentOverrideTargets: ReadonlySet<string>,
+): readonly ComponentPropDecl[] {
+  const declared = new Set(base.map((p) => p.defId));
+  const out: ComponentPropDecl[] = [...base];
+  const seen = new Set<string>();
+  const roots: readonly FigNode[] = variants.size === 0 ? [target] : [...findVariantChildren(source, target)];
+  for (const root of roots) {
+    visitInstanceDescendants(source, root, (instance) => {
+      const guidStr = guidToString(instance.guid);
+      if (seen.has(guidStr)) {
+        return;
+      }
+      seen.add(guidStr);
+      const defId = `${SYNTHETIC_VARIANT_PREFIX}${guidStr}`;
+      if (declared.has(defId)) {
+        return;
+      }
+      // Only register a synthetic variant prop when some call site
+      // in the entire document overrides this INSTANCE's symbolID.
+      // The override may live on an outer INSTANCE in a different
+      // SYMBOL body (e.g. icon-item is overridden by call sites in
+      // footer), so the check is global. Without any overrides, no
+      // consumer needs the swap and the prop would only pollute the
+      // signature.
+      if (!documentOverrideTargets.has(guidStr)) {
+        return;
+      }
+      const decl = buildSyntheticVariantDecl(source, instance, defId, guidStr);
+      if (decl !== undefined) {
+        out.push(decl);
+      }
+    });
+  }
+  return out;
+}
+
+function visitInstanceDescendants(
+  source: FigDocumentContext,
+  node: FigNode,
+  visit: (descendant: FigNode) => void,
+): void {
+  for (const child of source.document.childrenOf(node)) {
+    if (child.type?.name === "INSTANCE") {
+      visit(child);
+    }
+    visitInstanceDescendants(source, child, visit);
+  }
+}
+
+function buildSyntheticVariantDecl(
+  source: FigDocumentContext,
+  instance: FigNode,
+  defId: string,
+  guidStr: string,
+): ComponentPropDecl | undefined {
+  const symbolGuid = instance.symbolData?.symbolID;
+  if (!symbolGuid) {
+    return undefined;
+  }
+  const symbolNode = source.document.nodesByGuid.get(guidToString(symbolGuid));
+  if (!symbolNode) {
+    return undefined;
+  }
+  // Variant set root is the SYMBOL's parent when that parent is a
+  // variant-set FRAME. Without a variant set, there is no choice to
+  // expose, so we skip the synthetic prop entirely.
+  const parentGuid = symbolNode.parentIndex?.guid;
+  if (!parentGuid) {
+    return undefined;
+  }
+  const parent = source.document.nodesByGuid.get(guidToString(parentGuid));
+  if (!parent || !isVariantSetRoot(parent)) {
+    return undefined;
+  }
+  // Enumerate every SYMBOL child of the variant-set root and use its
+  // `variantPropSpecs[0].value` (or, when missing, a stable fallback
+  // derived from the SYMBOL name) as the variant value the consumer
+  // would type from a TypeScript prop.
+  const values: string[] = [];
+  let defaultValue: string | undefined;
+  const siblings = findVariantChildren(source, parent);
+  const targetSymbolKey = guidToString(symbolGuid);
+  // Use buildVariantMap to mirror how the variant set's own
+  // synthetic-variant axis was keyed (handles duplicate value names
+  // by suffixing with `-2`, `-3`, …).
+  const variantMap = buildVariantMap(source, parent);
+  for (const [key, variant] of variantMap) {
+    values.push(key);
+    if (guidToString(variant.guid) === targetSymbolKey) {
+      defaultValue = key;
+    }
+  }
+  if (values.length === 0) {
+    return undefined;
+  }
+  if (defaultValue === undefined) {
+    // The instance's symbolID points outside the variant set
+    // (deleted variant?). Fall back to the first available key so
+    // the prop still has a valid default; the consumer can override.
+    defaultValue = values[0];
+  }
+  void guidStr;
+  return {
+    kind: "variant",
+    name: syntheticVariantPropName(guidToString(instance.guid)),
+    defId,
+    values,
+    defaultValue,
+  };
+}
+
 function visitTextDescendants(source: FigDocumentContext, node: FigNode, visit: (descendant: FigNode) => void): void {
+  visitTextDescendantsInner(source, node, visit, new Set());
+}
+
+/**
+ * Walk every TEXT descendant under `node`. When the walk hits an
+ * INSTANCE, follow `symbolID` and continue inside the referenced
+ * SYMBOL's body — INSTANCEs that nest one component inside another
+ * (e.g. `icon-item` containing a `button-primary` instance whose
+ * own TEXT receives a per-call-site override) need their inner TEXT
+ * descendants registered on the *outer* component so the synthetic
+ * text prop can carry the per-instance override value across the
+ * nested-component boundary.
+ *
+ * Visited SYMBOL guids are tracked to avoid the cycles a
+ * variant-set / cross-referencing SYMBOL graph can introduce.
+ */
+function visitTextDescendantsInner(
+  source: FigDocumentContext,
+  node: FigNode,
+  visit: (descendant: FigNode) => void,
+  visitedSymbolGuids: Set<string>,
+): void {
   for (const child of source.document.childrenOf(node)) {
     if (child.type?.name === "TEXT") {
       visit(child);
     }
-    visitTextDescendants(source, child, visit);
+    visitTextDescendantsInner(source, child, visit, visitedSymbolGuids);
+    if (child.type?.name === "INSTANCE") {
+      const symbolGuid = child.symbolData?.symbolID;
+      if (symbolGuid) {
+        const key = guidToString(symbolGuid);
+        if (!visitedSymbolGuids.has(key)) {
+          visitedSymbolGuids.add(key);
+          const symbol = findNodeByGuid(source.document, symbolGuid);
+          if (symbol !== undefined) {
+            visitTextDescendantsInner(source, symbol, visit, visitedSymbolGuids);
+            // Also walk every OTHER variant in the same variant
+            // set: a call site at the outer SYMBOL body may swap
+            // this INSTANCE's `symbolID` via `overriddenSymbolID`,
+            // exposing TEXT descendants that live in a *different*
+            // variant's body. Without this, the synthetic text-prop
+            // registration misses those TEXTs, and the deep
+            // override (e.g. block-features → sub-heading variant
+            // swap + TEXT 28:960 to "Management") falls through to
+            // the SYMBOL-author default instead of bubbling up to
+            // the call site.
+            const parentGuid = symbol.parentIndex?.guid;
+            if (parentGuid) {
+              const parent = findNodeByGuid(source.document, parentGuid);
+              if (parent && isVariantSetRoot(parent)) {
+                for (const sibling of source.document.childrenOf(parent)) {
+                  if (sibling.type?.name !== "SYMBOL") {
+                    continue;
+                  }
+                  const siblingKey = guidToString(sibling.guid);
+                  if (visitedSymbolGuids.has(siblingKey)) {
+                    continue;
+                  }
+                  visitedSymbolGuids.add(siblingKey);
+                  visitTextDescendantsInner(source, sibling, visit, visitedSymbolGuids);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -270,9 +751,7 @@ function buildPropDecls(
   );
 }
 
-function buildVariantPropDeclFromComponentSet(
-  variants: ReadonlyMap<string, FigNode>,
-): readonly ComponentPropDecl[] {
+function buildVariantPropDeclFromComponentSet(variants: ReadonlyMap<string, FigNode>): readonly ComponentPropDecl[] {
   if (variants.size === 0) {
     return [];
   }
@@ -301,9 +780,7 @@ function buildVariantPropDeclFromComponentSet(
  * the result array itself — the project's no-`let` lint rule is a
  * structural guard for exactly this kind of imperative dedup-flag pattern.
  */
-function collapseVariantDecls(
-  decls: readonly ComponentPropDecl[],
-): readonly ComponentPropDecl[] {
+function collapseVariantDecls(decls: readonly ComponentPropDecl[]): readonly ComponentPropDecl[] {
   return decls.reduce<ComponentPropDecl[]>((acc, decl) => {
     if (decl.kind === "variant" && acc.some((existing) => existing.kind === "variant")) {
       return acc;
@@ -312,10 +789,7 @@ function collapseVariantDecls(
   }, []);
 }
 
-function mapPropDef(
-  def: FigComponentPropDef,
-  variants: ReadonlyMap<string, FigNode>,
-): ComponentPropDecl | undefined {
+function mapPropDef(def: FigComponentPropDef, variants: ReadonlyMap<string, FigNode>): ComponentPropDecl | undefined {
   if (!def.id || !def.name) {
     return undefined;
   }
@@ -353,16 +827,45 @@ function mapVariantPropDef(
   return { kind: "variant", name: "variant", defId, values, defaultValue };
 }
 
-function collectInstancesIn(
+function collectInstancesIn(node: FigNode, out: FigNode[], document: FigKiwiDocumentIndex): void {
+  collectInstancesWithSymbolBodies(node, out, document, new Set());
+}
+
+/**
+ * Walk the subtree under `node` and add every INSTANCE we encounter
+ * to `out`. When the INSTANCE points at a SYMBOL on disk, also walk
+ * the SYMBOL's body — INSTANCEs declared inside a SYMBOL (e.g. the
+ * `header` SYMBOL containing `logo-tate`, `menu-sub`, `menu`,
+ * `button-icon` instances) are not direct descendants of the page
+ * frame, so the page-level walk alone would miss them and the
+ * registry would emit empty `<div>`s where those nested components
+ * should render. Visited SYMBOL guids are tracked to avoid the
+ * cycles a Variant-Set / mutually-referencing SYMBOL graph can form.
+ */
+function collectInstancesWithSymbolBodies(
   node: FigNode,
   out: FigNode[],
-  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+  document: FigKiwiDocumentIndex,
+  visitedSymbolGuids: Set<string>,
 ): void {
   if (node.type.name === "INSTANCE") {
     out.push(node);
+    const symbolGuid = node.symbolData?.symbolID;
+    if (symbolGuid) {
+      const key = guidToString(symbolGuid);
+      if (!visitedSymbolGuids.has(key)) {
+        visitedSymbolGuids.add(key);
+        const symbol = findNodeByGuid(document, symbolGuid);
+        if (symbol !== undefined) {
+          for (const child of document.childrenOf(symbol)) {
+            collectInstancesWithSymbolBodies(child, out, document, visitedSymbolGuids);
+          }
+        }
+      }
+    }
   }
-  for (const child of childrenOf(node)) {
-    collectInstancesIn(child, out, childrenOf);
+  for (const child of document.childrenOf(node)) {
+    collectInstancesWithSymbolBodies(child, out, document, visitedSymbolGuids);
   }
 }
 
@@ -409,15 +912,124 @@ export function buildRegistry(source: FigDocumentContext, frames: readonly FigNo
     });
   }
 
+  // Precompute the document-wide set of INSTANCE guids that some call
+  // site overrides via `overriddenSymbolID`. Components whose
+  // descendants are never swapped don't need synthetic variant
+  // props on their signature.
+  const documentOverrideTargets = collectDocumentOverriddenSymbolIDTargets(source, frames);
+
   for (const frame of frames) {
     const instances: FigNode[] = [];
-    collectInstancesIn(frame, instances, source.document.childrenOf);
+    collectInstancesIn(frame, instances, source.document);
     for (const instance of instances) {
-      registerInstanceTarget(source, instance, componentRegistry, nameUsed, componentSlugUsed);
+      registerInstanceTarget(source, instance, componentRegistry, nameUsed, componentSlugUsed, documentOverrideTargets);
     }
   }
 
-  return { frames: frameRegistry, components: componentRegistry };
+  const imageFillOverrideTargets = collectDocumentImageFillOverrideTargets(source, frames);
+
+  return { frames: frameRegistry, components: componentRegistry, imageFillOverrideTargets };
+}
+
+export function collectDocumentImageFillOverrideTargets(
+  source: FigDocumentContext,
+  frames: readonly FigNode[],
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  const visited = new Set<string>();
+  function visit(node: FigNode): void {
+    if (node.type?.name === "INSTANCE") {
+      for (const override of node.symbolData?.symbolOverrides ?? []) {
+        const guids = override.guidPath?.guids;
+        if (!guids || guids.length === 0) {
+          continue;
+        }
+        const targetGuid = guids[guids.length - 1];
+        if (!targetGuid) {
+          continue;
+        }
+        const fps = (override as { readonly fillPaints?: readonly { readonly type?: { readonly name?: string } }[] })
+          .fillPaints;
+        if (!fps || fps.length === 0) {
+          continue;
+        }
+        const hasImage = fps.some((fp) => fp?.type?.name === "IMAGE");
+        if (!hasImage) {
+          continue;
+        }
+        out.add(guidToString(targetGuid));
+      }
+      const symbolGuid = node.symbolData?.symbolID;
+      if (symbolGuid) {
+        const key = guidToString(symbolGuid);
+        if (!visited.has(key)) {
+          visited.add(key);
+          const symbol = findNodeByGuid(source.document, symbolGuid);
+          if (symbol !== undefined) {
+            for (const child of source.document.childrenOf(symbol)) {
+              visit(child);
+            }
+          }
+        }
+      }
+    }
+    for (const child of source.document.childrenOf(node)) {
+      visit(child);
+    }
+  }
+  for (const frame of frames) {
+    visit(frame);
+  }
+  return out;
+}
+
+function collectDocumentOverriddenSymbolIDTargets(
+  source: FigDocumentContext,
+  frames: readonly FigNode[],
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  const visited = new Set<string>();
+  function visit(node: FigNode): void {
+    if (node.type?.name === "INSTANCE") {
+      for (const override of node.symbolData?.symbolOverrides ?? []) {
+        const guids = override.guidPath?.guids;
+        if (!guids || guids.length === 0) {
+          continue;
+        }
+        const targetGuid = guids[guids.length - 1];
+        if (!targetGuid) {
+          continue;
+        }
+        const swap = (
+          override as { readonly overriddenSymbolID?: { readonly sessionID: number; readonly localID: number } }
+        ).overriddenSymbolID;
+        if (!swap) {
+          continue;
+        }
+        out.add(guidToString(targetGuid));
+      }
+      const symbolGuid = node.symbolData?.symbolID;
+      if (symbolGuid) {
+        const key = guidToString(symbolGuid);
+        if (!visited.has(key)) {
+          visited.add(key);
+          const symbol = findNodeByGuid(source.document, symbolGuid);
+          if (symbol !== undefined) {
+            for (const child of source.document.childrenOf(symbol)) {
+              visit(child);
+            }
+          }
+        }
+      }
+    }
+    for (const child of source.document.childrenOf(node)) {
+      visit(child);
+    }
+  }
+  for (const frame of frames) {
+    visit(frame);
+  }
+  return out;
 }
 
 function registerInstanceTarget(
@@ -426,6 +1038,7 @@ function registerInstanceTarget(
   componentRegistry: Map<string, ComponentTarget>,
   nameUsed: Set<string>,
   componentSlugUsed: Set<string>,
+  documentOverrideTargets: ReadonlySet<string>,
 ): void {
   const target = componentNodeForInstance(source, instance);
   if (!target) {
@@ -443,7 +1056,8 @@ function registerInstanceTarget(
   const name = uniqueIdent(baseName, nameUsed);
   const variants = buildVariantMap(source, target);
   const baseProps = buildPropDecls(target.componentPropDefs, variants);
-  const props = augmentWithImplicitTextProps(source, baseProps, target, variants);
+  const withText = augmentWithImplicitTextProps(source, baseProps, target, variants);
+  const props = augmentWithImplicitVariantProps(source, withText, target, variants, documentOverrideTargets);
   componentRegistry.set(id, {
     node: target,
     componentName: name,

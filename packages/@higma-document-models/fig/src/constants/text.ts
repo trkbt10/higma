@@ -82,6 +82,23 @@ export const NUMBER_UNITS_VALUES = requireFigEnumTable("NumberUnits", [
 export type NumberUnits = "RAW" | "PIXELS" | "PERCENT";
 
 /**
+ * Bullet-list type values — schema `BulletType` (typeId 326).
+ * Encoded per-character-run via `TextData.styleOverrideTable`
+ * entries' `bulletType` field; runs whose paragraph belongs to a
+ * bullet list carry `ORDERED` (numbered) or `UNORDERED` (•). `INDENT`
+ * is a nested-indent marker, `NO_LIST` is the schema's explicit
+ * absence-of-list state.
+ */
+export const BULLET_TYPE_VALUES = requireFigEnumTable("BulletType", [
+  "ORDERED",
+  "UNORDERED",
+  "INDENT",
+  "NO_LIST",
+]);
+
+export type BulletType = "ORDERED" | "UNORDERED" | "INDENT" | "NO_LIST";
+
+/**
  * Text truncation values — schema `TextTruncation`. `ENDING` wraps
  * within the bounding box then truncates with an ellipsis when the
  * box runs out of vertical space; `DISABLED` allows the text to

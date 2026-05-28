@@ -363,7 +363,10 @@ describe("visibleBlobsRule", () => {
     });
   }
   function withFillGeometry(node: FigNode, blobIndex: number): FigNode {
-    return { ...node, fillGeometry: [{ commandsBlob: blobIndex, windingRule: "NONZERO" }] } as FigNode;
+    // `styleID: 0` is the load-bearing default real Figma exports
+    // always emit on geometry entries — the lint rule requires it
+    // alongside `commandsBlob` (see visible-blobs.ts).
+    return { ...node, fillGeometry: [{ commandsBlob: blobIndex, windingRule: "NONZERO", styleID: 0 }] } as FigNode;
   }
 
   it("flags a visible paintable shape with no fillGeometry", () => {

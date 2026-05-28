@@ -85,4 +85,14 @@ export type EmitRegistry = {
    * resolving their `symbolID` then walking up to the variant set.
    */
   readonly components: ReadonlyMap<string, ComponentTarget>;
+  /**
+   * Set of descendant guids that some call site in the document
+   * overrides with an IMAGE fillPaint. When emitting a SYMBOL body
+   * that contains such a descendant, the emitter swaps the literal
+   * solid `background` for `background-image: var(--bg-<guid>,
+   * <default>)` so the inner div can pick up an image URL passed in
+   * via the wrapper's CSS variable. Empty when no IMAGE fill
+   * overrides exist anywhere.
+   */
+  readonly imageFillOverrideTargets: ReadonlySet<string>;
 };

@@ -23,7 +23,7 @@ import {
   exportFig,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, toEnumValue } from "@higma-document-models/fig/constants";
 import type { FigDocumentContext } from "@higma-document-io/fig";
 import type { FigGuid } from "@higma-document-models/fig/types";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
@@ -226,11 +226,11 @@ function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
     opacity: 1,
     clipsContent: true,
     fills: [{
-      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+      type: toEnumValue("SOLID", PAINT_TYPE_VALUES)!,
       color: bg,
       opacity: 1,
       visible: true,
-      blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
+      blendMode: toEnumValue("NORMAL", BLEND_MODE_VALUES)!,
     }],
   };
   const wrapperResult = addNode({ state, context: opts.context, pageGuid, parentGuid: null, spec: wrapperSpec });

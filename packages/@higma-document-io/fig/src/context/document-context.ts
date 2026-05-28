@@ -256,14 +256,46 @@ function loadedFigFileWithNodeChanges(
   };
 }
 
+function findExistingBlobIndex(
+  existingBlobs: readonly FigBlob[],
+  candidateBytes: readonly number[],
+): number | undefined {
+  for (let i = 0; i < existingBlobs.length; i += 1) {
+    const existing = existingBlobs[i]!.bytes;
+    if (existing.length !== candidateBytes.length) {
+      continue;
+    }
+    let equal = true;
+    for (let b = 0; b < existing.length; b += 1) {
+      if (existing[b] !== candidateBytes[b]) {
+        equal = false;
+        break;
+      }
+    }
+    if (equal) {
+      return i;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Append one binary blob to the Kiwi document resources and re-index the
- * same nodeChanges with the new resource set.
+ * same nodeChanges with the new resource set. Identical-bytes blobs are
+ * deduplicated against the existing set — the caller receives the
+ * existing blob's index instead of a fresh entry. Figma's own exporter
+ * dedupes identically (multiple shapes with the same geometry share one
+ * Blob in the file's `blobs` array), so this matches the on-disk SoT
+ * and keeps fixture round-trips byte-for-byte with Figma desktop.
  */
 export function addBlobToFigDocumentContext({
   context,
   blob,
 }: AddFigDocumentBlobOptions): { readonly context: FigDocumentContext; readonly blobIndex: number } {
+  const existingIndex = findExistingBlobIndex(context.blobs, blob.bytes);
+  if (existingIndex !== undefined) {
+    return { context, blobIndex: existingIndex };
+  }
   const blobIndex = context.blobs.length;
   const blobs = [...context.blobs, blob];
   if (context.loaded) {

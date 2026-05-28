@@ -300,7 +300,14 @@ describe("resolveRenderTree — multi-paint fills", () => {
 });
 
 describe("resolveRenderTree — viewport-root frame clip", () => {
-  it("marks a square viewport-root frame clip as viewport-owned", () => {
+  it("marks a square viewport-root frame clip as viewport-owned when a partially-overflowing child is present", () => {
+    // Pick a child whose translated bounds straddle the frame's right
+    // edge ([0..100] vs child at [80..180]) — the child intersects the
+    // frame's clip rect, so the clip-outside cull keeps it, and the
+    // viewport-root path can express the clip as viewport-owned.
+    // A child that is *entirely* outside the clip is dropped by the
+    // cull (matching Figma's SVG exporter behaviour); see the next
+    // case below for that branch.
     const frame: FrameNode = {
       type: "frame",
       id: createNodeId("viewport-frame"),
@@ -313,13 +320,44 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
       surfaceShape: makeFrameSurface(100, 100),
       fills: [],
       clipsContent: true,
-      children: [makeRect("overflowing-child", { ...IDENTITY, m02: 120 })],
+      children: [makeRect("overflowing-child", { ...IDENTITY, m02: 90 })],
     };
     const tree = resolveRenderTree(makeSceneGraph([frame], { x: 0, y: 0, width: 100, height: 100 }));
     const node = tree.children[0] as RenderFrameNode;
 
+    // Child spans x=[90..110] crossing the frame's right edge at
+    // x=100 — partially inside, partially overflowing. The cull keeps
+    // it (bounds intersect the clip rect), and the viewport-root
+    // optimisation still marks the clip as viewport-owned.
     expect(node.childClipId).toBeDefined();
     expect(node.omitChildClip).toBe(true);
+  });
+
+  it("drops square viewport-root frame children entirely outside the clip rect", () => {
+    // A child translated past the frame's far edge (clip is [0..100],
+    // child occupies [120..220]) cannot intersect the clip in any
+    // pixel. Figma's SVG exporter omits the subtree from the output;
+    // we mirror that by culling the child before clip-id resolution,
+    // so neither a clipPath nor unreachable geometry survives.
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("viewport-frame-fully-outside"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      surfaceShape: makeFrameSurface(100, 100),
+      fills: [],
+      clipsContent: true,
+      children: [makeRect("offscreen-child", { ...IDENTITY, m02: 120 })],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame], { x: 0, y: 0, width: 100, height: 100 }));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.children).toHaveLength(0);
+    expect(node.childClipId).toBeUndefined();
   });
 
   it("omits a rounded viewport-root frame clip when children stay inside the rectangular frame bounds", () => {

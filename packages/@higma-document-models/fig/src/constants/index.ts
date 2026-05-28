@@ -56,6 +56,7 @@ export {
   TEXT_TRUNCATION_VALUES,
   LEADING_TRIM_VALUES,
   NUMBER_UNITS_VALUES,
+  BULLET_TYPE_VALUES,
   type TextAlignHorizontal,
   type TextAlignVertical,
   type TextAutoResize,
@@ -64,6 +65,7 @@ export {
   type TextTruncation,
   type LeadingTrim,
   type NumberUnits,
+  type BulletType,
 } from "./text";
 
 // Layout

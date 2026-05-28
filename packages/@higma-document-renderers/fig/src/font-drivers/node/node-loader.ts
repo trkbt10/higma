@@ -65,6 +65,7 @@ import { discoverLinux } from "./discover-linux";
 import { discoverWin32 } from "./discover-win32";
 import { classifyFontFile, scanFontDirectories } from "./discover-dirs";
 import { getVariableAxes, variationForWeight, wrapFontWithVariation } from "../variable-font";
+import { wrapFontWithSmallCaps } from "../small-caps";
 import { applyGposExtensionFixup } from "./gpos-extension/fixup";
 import type {
   DiscoveredFontFile,
@@ -766,6 +767,13 @@ export function createNodeFontLoaderWithEnv(
     }
     const rawFont = toLoadedFontType(parseFaceAt(env.fs, bestMatch.path, bestMatch.faceIndex));
 
+    // Teach the raw Font to answer `substituteGlyph(char, "smcp"|"c2sc")`
+    // before any further wrapping — variable-font wrapping forwards
+    // the method through its Proxy, so the renderer sees small-caps
+    // substitution on variation-applied glyphs too. Static fonts pass
+    // through unchanged from `wrapFontWithSmallCaps`'s perspective.
+    const fontWithSmallCaps = wrapFontWithSmallCaps(rawFont);
+
     // Variable fonts (SF Pro / SFNS, Roboto Flex, system Inter
     // variable, …) ship one file covering the full weight axis.
     // `glyph.getPath` in opentype.js does NOT consult the font's
@@ -775,13 +783,13 @@ export function createNodeFontLoaderWithEnv(
     // path extraction through `font.variation.getTransform` so the
     // path commands the renderer extracts match the requested
     // weight/width.
-    const variableAxes = getVariableAxes(rawFont);
+    const variableAxes = getVariableAxes(fontWithSmallCaps);
     // The wrapping returns a Font view that applies `wght` immediately
     // and leaves `opsz` at the file's default. Per-render
     // `font-size` reaches the path renderer separately and updates
     // `opsz` via `setVariationOpticalSize` — the loader doesn't see
     // the size, so wiring it through here would split the SoT.
-    const font = applyVariationWrapping(rawFont, variableAxes, query.weight);
+    const font = applyVariationWrapping(fontWithSmallCaps, variableAxes, query.weight);
 
     return {
       font,

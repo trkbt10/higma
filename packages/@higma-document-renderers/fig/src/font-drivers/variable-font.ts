@@ -268,6 +268,21 @@ function createVariationFontView(
       cache.set(char, view);
       return view;
     },
+    // Forward `substituteGlyph` from the inner font and wrap the
+    // returned glyph in the same variation transform `charToGlyph`
+    // applies. Without this, a variable font ringed through
+    // `wrapFontWithVariation` after `wrapFontWithSmallCaps` would
+    // lose access to the smcp / c2sc surface — the wrapper builds a
+    // fresh object and doesn't forward arbitrary keys.
+    ...(inner.substituteGlyph === undefined ? {} : {
+      substituteGlyph: ((char: string, feature: "smcp" | "c2sc"): AbstractGlyph | undefined => {
+        const innerSub = inner.substituteGlyph;
+        if (innerSub === undefined) { return undefined; }
+        const substituted = innerSub.call(inner, char, feature);
+        if (substituted === undefined) { return undefined; }
+        return createVariationGlyphView(substituted, variationApi, variation, inner.unitsPerEm);
+      }),
+    }),
     getKerningValue: (leftGlyph, rightGlyph) => {
       const innerKerning = inner.getKerningValue;
       if (typeof innerKerning !== "function") {

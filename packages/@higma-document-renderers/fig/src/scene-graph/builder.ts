@@ -46,7 +46,7 @@ import { resolveBooleanOperationType } from "@higma-document-models/fig/boolean-
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import { resolveClipsContent as resolveGeometryClipsContent } from "@higma-document-models/fig/geometry-interpret";
 import { resolveAuthoredAutoLayoutFrameStretch } from "@higma-document-models/fig/symbols/autolayout-solver";
-import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
+import type { AffineMatrix, CornerRadius, PathCommand } from "@higma-primitives/path";
 
 /**
  * Figma stores a component variant set as a Kiwi FRAME with
@@ -603,10 +603,18 @@ function buildEllipseNode(node: FigNode, ctx: BuildContext): EllipseNode {
 
 /**
  * Extract arc data from an ellipse node (partial arcs and donuts).
+ *
+ * When a `fillGeometry` (or `strokeGeometry`) blob is present it wins
+ * over `arcData` — the blob is the SoT for the node's painted shape,
+ * mirroring Figma's own SVG exporter which writes the blob path and
+ * ignores `arcData` even when both are set. Without this gate, an
+ * ellipse with a "full circle" blob plus stale `arcData` would render
+ * as a pie slice while Figma's export shows a full ellipse.
  */
 function extractArcData(node: FigNode): ArcData | undefined {
   const arcData = node.arcData;
   if (!arcData) { return undefined; }
+  if (hasKiwiShapeGeometry(node)) { return undefined; }
   const startingAngle = arcData.startingAngle ?? 0;
   const endingAngle = arcData.endingAngle ?? Math.PI * 2;
   const innerRadius = arcData.innerRadius ?? 0;
@@ -754,6 +762,36 @@ function stripGeometryStyleIds(contours: readonly DecodedContour[]): PathContour
   return contours.map(({ geometryStyleId: _geometryStyleId, ...rest }) => rest);
 }
 
+/**
+ * Translate every path command's y coordinate by `dy`. The shift is
+ * applied in the contour's local coordinate space — when the contour
+ * is later rendered through a rotation transform, the shift rotates
+ * with it. Used for LINE nodes so the centerline lands at
+ * `m12 - strokeWeight/2` to match Figma's SVG export convention.
+ */
+function shiftContoursY(contours: readonly DecodedContour[], dy: number): DecodedContour[] {
+  return contours.map((contour) => ({
+    ...contour,
+    commands: contour.commands.map((cmd) => shiftPathCommandY(cmd, dy)),
+  }));
+}
+
+function shiftPathCommandY(cmd: PathCommand, dy: number): PathCommand {
+  switch (cmd.type) {
+    case "M":
+    case "L":
+      return { ...cmd, y: cmd.y + dy };
+    case "C":
+      return { ...cmd, y1: cmd.y1 + dy, y2: cmd.y2 + dy, y: cmd.y + dy };
+    case "Q":
+      return { ...cmd, y1: cmd.y1 + dy, y: cmd.y + dy };
+    case "A":
+      return { ...cmd, y: cmd.y + dy };
+    case "Z":
+      return cmd;
+  }
+}
+
 function reconstructThinCenterline(
   contours: Parameters<typeof reconstructStrokeCenterline>[0],
   isStrokeGeometry: boolean,
@@ -813,6 +851,18 @@ function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
     reconstructedRef.value = true;
   }
 
+  // LINE nodes have a Figma-specific position convention: the node's
+  // `transform.m12` is the BOTTOM of the stroke envelope (largest y in
+  // y-down coords), not the centerline. The centerline therefore sits
+  // at `m12 - strokeWeight/2`. To match Figma's SVG export of LINE
+  // (`<line y1=y2=centerline ...>`), shift the local-coord contour up
+  // by `strokeWeight/2` — the node transform will rotate this shift
+  // into the perpendicular-to-line direction in render space.
+  const isLine = getNodeType(node) === "LINE";
+  if (isLine && scalarWeight > 0) {
+    contoursRef.value = shiftContoursY(contoursRef.value, -scalarWeight / 2);
+  }
+
   // Apply per-path style overrides from vectorData
   const resolvedContours = applyStyleOverrides(contoursRef.value, node, ctx);
 
@@ -821,7 +871,14 @@ function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
   // unless we successfully reconstructed the centerline above, in which
   // case the strokeGeometry is gone and we render the centerline as a
   // proper stroke.
-  const treatAsFill = isStrokeGeometryRef.value && !reconstructedRef.value;
+  //
+  // LINE nodes are the exception: a LINE has no fill region, so its
+  // `strokeGeometry` carries the centerline path (single M..L), not a
+  // pre-expanded outline. Filling that open path renders zero pixels.
+  // Figma's own SVG exporter emits `<line ... stroke=... stroke-width=...>`
+  // for LINE — match that by routing the centerline through the stroke
+  // pipeline instead of the fill pipeline.
+  const treatAsFill = isStrokeGeometryRef.value && !reconstructedRef.value && !isLine;
   const resolvedFillPaints = resolveNodeFillPaints(node, node.fillPaints, ctx);
   const resolvedStrokePaints = resolveNodeStrokePaints(node, node.strokePaints, ctx);
   const fills = resolveVectorFills(

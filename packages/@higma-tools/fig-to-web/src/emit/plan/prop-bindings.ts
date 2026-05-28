@@ -26,9 +26,10 @@
  * into JSX props.
  */
 import type { FigComponentPropRef, FigNode } from "@higma-document-models/fig/types";
-import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { findNodeByGuid, guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import type { ComponentPropDecl, ComponentTarget } from "../types";
-import { SYNTHETIC_TEXT_PREFIX } from "./registry";
+import { SYNTHETIC_TEXT_PREFIX, SYNTHETIC_VARIANT_PREFIX } from "./registry";
 
 export type PropBindingField = "TEXT_DATA" | "VISIBLE" | "OVERRIDDEN_SYMBOL_ID";
 
@@ -96,11 +97,69 @@ function declByDefId(target: ComponentTarget): ReadonlyMap<string, ComponentProp
 function visitDescendants(
   node: FigNode,
   visit: (descendant: FigNode) => void,
-  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+  document: FigKiwiDocumentIndex,
 ): void {
-  for (const child of childrenOf(node)) {
+  visitDescendantsInner(node, visit, document, new Set());
+}
+
+/**
+ * Walk every descendant under `node`, following INSTANCE → SYMBOL
+ * edges so descendants authored inside a nested SYMBOL body still
+ * surface to the outer component's prop-bindings map. Without this
+ * recursion, a TEXT or paint-bearing slot that lives inside a
+ * nested INSTANCE (e.g. icon-item containing a button-primary
+ * INSTANCE whose own TEXT receives a per-call-site override) never
+ * picks up its synthetic prop binding and renders the SYMBOL's
+ * default characters everywhere.
+ *
+ * `visitedSymbolGuids` short-circuits the recursion when the same
+ * SYMBOL is reached again, which happens whenever a component
+ * appears more than once inside another component or transitively
+ * recurses via a variant set.
+ */
+function visitDescendantsInner(
+  node: FigNode,
+  visit: (descendant: FigNode) => void,
+  document: FigKiwiDocumentIndex,
+  visitedSymbolGuids: Set<string>,
+): void {
+  for (const child of document.childrenOf(node)) {
     visit(child);
-    visitDescendants(child, visit, childrenOf);
+    visitDescendantsInner(child, visit, document, visitedSymbolGuids);
+    if (child.type?.name === "INSTANCE") {
+      const symbolGuid = child.symbolData?.symbolID;
+      if (symbolGuid) {
+        const key = guidToString(symbolGuid);
+        if (!visitedSymbolGuids.has(key)) {
+          visitedSymbolGuids.add(key);
+          const symbol = findNodeByGuid(document, symbolGuid);
+          if (symbol !== undefined) {
+            visitDescendantsInner(symbol, visit, document, visitedSymbolGuids);
+            // Walk every sibling variant in the same set as well, so
+            // a deep override that swaps the variant + overrides a
+            // TEXT only present in the OTHER variant still surfaces
+            // its target descendant in the binding map.
+            const parentGuid = symbol.parentIndex?.guid;
+            if (parentGuid) {
+              const parent = findNodeByGuid(document, parentGuid);
+              if (parent && isVariantSetFrame(parent)) {
+                for (const sib of document.childrenOf(parent)) {
+                  if (sib.type?.name !== "SYMBOL") {
+                    continue;
+                  }
+                  const sibKey = guidToString(sib.guid);
+                  if (visitedSymbolGuids.has(sibKey)) {
+                    continue;
+                  }
+                  visitedSymbolGuids.add(sibKey);
+                  visitDescendantsInner(sib, visit, document, visitedSymbolGuids);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -132,11 +191,12 @@ function rootsOf(target: ComponentTarget): readonly FigNode[] {
  */
 export function buildPropBindings(
   target: ComponentTarget,
-  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+  document: FigKiwiDocumentIndex,
 ): PropBindings {
   const declMap = declByDefId(target);
   const syntheticByGuid = syntheticTextDeclByGuid(target);
-  if (declMap.size === 0 && syntheticByGuid.size === 0) {
+  const syntheticVariantByGuid = syntheticVariantDeclByGuid(target);
+  if (declMap.size === 0 && syntheticByGuid.size === 0 && syntheticVariantByGuid.size === 0) {
     return EMPTY_BINDINGS;
   }
   const out = new Map<string, PropBinding>();
@@ -147,10 +207,15 @@ export function buildPropBindings(
         collectKiwiRefs(descendant, declMap, guidStr, out);
         collectStringRefs(descendant, declMap, guidStr, out);
       }
-      // Don't overwrite an explicit Kiwi/string ref — the authored
-      // typed prop wins. Synthetic text props only fill in the gap
-      // where no explicit binding exists.
       if (out.has(guidStr)) {
+        return;
+      }
+      // Synthetic variant prop binds the INSTANCE-guid descendant
+      // to a variant-axis prop that consumer call sites can override
+      // to swap which variant of the inner SYMBOL renders.
+      const syntheticVariant = syntheticVariantByGuid.get(guidStr);
+      if (syntheticVariant !== undefined) {
+        out.set(guidStr, { field: "OVERRIDDEN_SYMBOL_ID", decl: syntheticVariant });
         return;
       }
       const synthetic = syntheticByGuid.get(guidStr);
@@ -158,7 +223,18 @@ export function buildPropBindings(
         return;
       }
       out.set(guidStr, { field: "TEXT_DATA", decl: synthetic });
-    }, childrenOf);
+    }, document);
+  }
+  return out;
+}
+
+function syntheticVariantDeclByGuid(target: ComponentTarget): ReadonlyMap<string, ComponentPropDecl> {
+  const out = new Map<string, ComponentPropDecl>();
+  for (const decl of target.props) {
+    if (decl.defId.startsWith(SYNTHETIC_VARIANT_PREFIX)) {
+      const guidStr = decl.defId.slice(SYNTHETIC_VARIANT_PREFIX.length);
+      out.set(guidStr, decl);
+    }
   }
   return out;
 }

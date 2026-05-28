@@ -100,6 +100,7 @@ function makeOpts(): EmitOpts {
 const EMPTY_REGISTRY: EmitRegistry = {
   frames: new Map(),
   components: new Map(),
+  imageFillOverrideTargets: new Set(),
 };
 const EMPTY_TOKEN_INDEX: TokenIndex = {
   colorIdForPaints: () => undefined,

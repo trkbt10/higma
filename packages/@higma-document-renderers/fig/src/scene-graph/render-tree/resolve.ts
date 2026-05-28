@@ -368,6 +368,160 @@ function frameRectContainsBounds(
     && bounds.maxY <= height + GEOMETRY_FLOAT_EPSILON;
 }
 
+function frameClipBoundsForRectCheck(node: FrameNode): { width: number; height: number } {
+  const clip = node.clip;
+  if (clip === undefined) {
+    return { width: node.width, height: node.height };
+  }
+  if (clip.type === "rect") {
+    return { width: clip.width, height: clip.height };
+  }
+  // Path clip that describes a plain axis-aligned rectangle —
+  // Figma's exporter emits the FRAME's outer rectangle as path
+  // geometry for non-rounded frames, even when the clip is
+  // logically a `{type: "rect"}`. Detect this exact shape (one
+  // contour of move + 4 line segments to the rectangle corners,
+  // optionally closed) and treat it as a rectangle so the cull
+  // can compare child bounds against it.
+  const rectBounds = pathClipAsAxisAlignedRect(clip);
+  if (rectBounds !== undefined) {
+    return rectBounds;
+  }
+  return { width: node.width, height: node.height };
+}
+
+function pathClipAsAxisAlignedRect(
+  clip: Extract<ClipShape, { readonly type: "path" }>,
+): { readonly width: number; readonly height: number } | undefined {
+  if (clip.contours.length !== 1) {
+    return undefined;
+  }
+  const contour = clip.contours[0];
+  if (contour === undefined) {
+    return undefined;
+  }
+  const commands = commandsWithoutClosingSegment(contour.commands);
+  // Recognise either a move + 3 lines (open quad — Figma's compact
+  // form) or move + 4 lines (closed quad — what the SoT actually
+  // emits for FRAME path clips at width/height bounds).
+  if (commands.length < 4 || commands.length > 5) {
+    return undefined;
+  }
+  const move = commands[0];
+  if (move?.type !== "M") {
+    return undefined;
+  }
+  const lineCommands = commands.slice(1);
+  if (!lineCommands.every((cmd) => cmd.type === "L")) {
+    return undefined;
+  }
+  // For an axis-aligned rectangle starting at (0,0), the corners
+  // visit (W,0), (W,H), (0,H) (and optionally back to (0,0)).
+  if (!nearlyEqual(move.x, 0) || !nearlyEqual(move.y, 0)) {
+    return undefined;
+  }
+  const corners = lineCommands as readonly { readonly type: "L"; readonly x: number; readonly y: number }[];
+  const c1 = corners[0];
+  const c2 = corners[1];
+  const c3 = corners[2];
+  if (c1 === undefined || c2 === undefined || c3 === undefined) {
+    return undefined;
+  }
+  // (W, 0) → (W, H) → (0, H). The optional 4th line returns to
+  // (0, 0); when present it must agree.
+  const width = c1.x;
+  const height = c2.y;
+  if (width <= 0 || height <= 0) {
+    return undefined;
+  }
+  if (!nearlyEqual(c1.y, 0)) {
+    return undefined;
+  }
+  if (!nearlyEqual(c2.x, width)) {
+    return undefined;
+  }
+  if (!nearlyEqual(c3.x, 0) || !nearlyEqual(c3.y, height)) {
+    return undefined;
+  }
+  const c4 = corners[3];
+  if (c4 !== undefined && (!nearlyEqual(c4.x, 0) || !nearlyEqual(c4.y, 0))) {
+    return undefined;
+  }
+  return { width, height };
+}
+
+function boundsIntersectFrameRect(
+  width: number,
+  height: number,
+  bounds: Bounds,
+): boolean {
+  // A child's visual bounds overlaps the frame's rectangular clip iff
+  // any horizontal or vertical span overlaps. Tolerated by
+  // GEOMETRY_FLOAT_EPSILON so a child whose edge is exactly on the
+  // frame boundary still renders.
+  return bounds.maxX > -GEOMETRY_FLOAT_EPSILON
+    && bounds.minX < width + GEOMETRY_FLOAT_EPSILON
+    && bounds.maxY > -GEOMETRY_FLOAT_EPSILON
+    && bounds.minY < height + GEOMETRY_FLOAT_EPSILON;
+}
+
+/**
+ * Drop children whose visual bounds are entirely outside the parent
+ * frame's clip rectangle when the frame clips its content.
+ *
+ * Figma's own SVG exporter omits these subtrees from the output — the
+ * frame's clip would mask them away anyway, and emitting them
+ * verbatim:
+ *   - Bloats the output with unreachable geometry (sometimes by
+ *     orders of magnitude when a multi-thousand-pixel Group sits
+ *     outside its 3738-tall frame, as in this project's
+ *     `Desktop - 4 > bg > Group 10`).
+ *   - Has tripped downstream rasterizers — resvg in particular panics
+ *     in `geom.rs::Rect::width` on certain off-canvas clipPath /
+ *     <use> shapes that our renderer emits when the subtree has its
+ *     own nested clip.
+ *
+ * Path-clipped frames keep all children — we don't currently project
+ * arbitrary path clips into bounds-test space, and Figma's exporter
+ * also keeps them for path clips. This pass only fires for
+ * rectangular clip frames whose bounds-test is exact.
+ */
+function cullClipOutsideChildren(
+  node: FrameNode,
+  children: readonly RenderNode[],
+): readonly RenderNode[] {
+  if (!node.clipsContent) {
+    return children;
+  }
+  const clip = node.clip;
+  if (clip !== undefined && clip.type !== "rect") {
+    // Path clips are only safe to cull against when they describe
+    // an axis-aligned rectangle. Complex path clips (arbitrary
+    // shapes, rounded rectangles whose curvature shouldn't be
+    // approximated as a containing rect at the bounds-test
+    // boundary) keep all children — Figma's exporter does the same.
+    if (clip.type === "path" && pathClipAsAxisAlignedRect(clip) === undefined) {
+      return children;
+    }
+  }
+  const { width, height } = frameClipBoundsForRectCheck(node);
+  if (width <= 0 || height <= 0) {
+    return children;
+  }
+  const kept: RenderNode[] = [];
+  for (const child of children) {
+    const bounds = transformedRenderNodeSubtreeVisualBounds(child);
+    if (bounds === null) {
+      kept.push(child);
+      continue;
+    }
+    if (boundsIntersectFrameRect(width, height, bounds)) {
+      kept.push(child);
+    }
+  }
+  return kept.length === children.length ? children : kept;
+}
+
 function resolveFrameChildClipId(
   node: FrameNode,
   children: readonly RenderNode[],
@@ -1387,7 +1541,8 @@ function resolveFrameNode(
   const hasFills = node.fills.length > 0;
 
   const strokeRendering = resolveFrameStrokeRendering(node, surfaceShape, ids, defs, surfaceClipShape);
-  const children = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
+  const resolvedKids = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
+  const children = cullClipOutsideChildren(node, resolvedKids);
   const hasFrameSurfaceFilterSource = renderFrameHasSurfaceFilterSource({ hasFills, strokeRendering });
   const surfaceFilterAttr = resolveOptionalFrameSurfaceFilterAttr({
     effectStack,

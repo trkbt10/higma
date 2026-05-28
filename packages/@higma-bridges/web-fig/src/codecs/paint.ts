@@ -28,7 +28,7 @@ import type {
   FigSolidPaint,
 } from "@higma-document-models/fig/types";
 import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
-import { PAINT_TYPE_VALUES, SCALE_MODE_VALUES, kiwiEnumName } from "@higma-document-models/fig/constants";
+import { PAINT_TYPE_VALUES, SCALE_MODE_VALUES, kiwiEnumName, toEnumValue } from "@higma-document-models/fig/constants";
 import type {
   GradientStopIR,
   ImagePaintIR,
@@ -95,7 +95,7 @@ function figSolidToIR(paint: FigSolidPaint): SolidPaintIR {
 
 function irSolidToFig(paint: SolidPaintIR): FigSolidPaint {
   return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+    type: toEnumValue("SOLID", PAINT_TYPE_VALUES)!,
     color: irColorToFig(paint.color),
     visible: paint.visible,
     opacity: paint.opacity,
@@ -129,7 +129,7 @@ function figLinearGradientToIR(paint: FigGradientPaint): LinearGradientPaintIR {
 function irLinearGradientToFig(paint: LinearGradientPaintIR): FigGradientPaint {
   const { sx, sy, ex, ey } = cssAngleToUnitEndpoints(paint.angle);
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+    type: toEnumValue("GRADIENT_LINEAR", PAINT_TYPE_VALUES)!,
     transform: gradientTransformFromUnitEndpoints({ x: sx, y: sy }, { x: ex, y: ey }),
     stops: paint.stops.map((s) => ({
       position: s.position,
@@ -255,7 +255,7 @@ function irImageToFig(paint: ImagePaintIR): FigImagePaint {
   // `image-pattern-finalize` rejects TILE without a factor; emitting
   // `1` here keeps the pipeline lossless for the natural-size case.
   return {
-    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    type: toEnumValue("IMAGE", PAINT_TYPE_VALUES)!,
     image: { hash: refToImageHash(paint.imageId) },
     imageScaleMode: figScale,
     visible: paint.visible,
@@ -297,13 +297,13 @@ function imageScaleModeName(mode: NonNullable<FigImagePaint["imageScaleMode"]>):
 function irScaleModeToFig(mode: ImagePaintIR["scaleMode"]): KiwiEnumValue<FigImageScaleMode> {
   switch (mode) {
     case "cover":
-      return { value: SCALE_MODE_VALUES.FILL, name: "FILL" };
+      return toEnumValue("FILL", SCALE_MODE_VALUES)!;
     case "contain":
-      return { value: SCALE_MODE_VALUES.FIT, name: "FIT" };
+      return toEnumValue("FIT", SCALE_MODE_VALUES)!;
     case "tile":
-      return { value: SCALE_MODE_VALUES.TILE, name: "TILE" };
+      return toEnumValue("TILE", SCALE_MODE_VALUES)!;
     case "stretch":
-      return { value: SCALE_MODE_VALUES.STRETCH, name: "STRETCH" };
+      return toEnumValue("STRETCH", SCALE_MODE_VALUES)!;
   }
 }
 

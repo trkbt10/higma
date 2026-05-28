@@ -6,6 +6,7 @@
   "sideEffects": false,
   "dependencies": {
     "@higma-codecs/png": "workspace:*",
+    "@higma-codecs/png-compare": "workspace:*",
     "@higma-codecs/raster": "workspace:*",
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",

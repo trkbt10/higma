@@ -72,6 +72,30 @@ export type ExtractedTextProps = {
   readonly textAutoResize: TextAutoResize;
   readonly textDecoration: TextDecoration;
   readonly size: TextBoxSize | undefined;
+  /**
+   * Extra vertical space (in px) inserted between paragraphs. Added
+   * once per paragraph boundary — Figma's `paragraphSpacing` matches
+   * CSS `margin-block-start` on the new paragraph rather than
+   * doubling on each side. Default 0.
+   */
+  readonly paragraphSpacing: number;
+  /**
+   * First-line indent (in px) applied to every paragraph EXCEPT the
+   * first. Matches Figma's behaviour: the leading paragraph stays
+   * flush with the text-box left edge while every subsequent
+   * paragraph's first visible line is shifted right by this amount.
+   * Default 0.
+   */
+  readonly paragraphIndent: number;
+  /**
+   * Figma's authored `textCase`. For `UPPER`/`LOWER`/`TITLE` the
+   * characters in `characters` are already transformed; for
+   * `SMALL_CAPS` / `SMALL_CAPS_FORCED` the source casing is preserved
+   * here so the path emitter can apply OpenType `smcp` / `c2sc`
+   * substitution per character — the renderer cannot recover the
+   * original case from an already-uppercased string.
+   */
+  readonly textCase: TextCase;
 };
 
 /**

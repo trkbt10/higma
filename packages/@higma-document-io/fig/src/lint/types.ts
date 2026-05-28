@@ -49,6 +49,7 @@ export type LintRuleId =
   | "fig.shape.stroke-fields"
   | "fig.shape.display-fields"
   | "fig.shape.fill-geometry"
+  | "fig.shape.geometry-style-id"
   | "fig.image.references"
   | "fig.parent.refs"
   | "fig.symbol.child-constraints"

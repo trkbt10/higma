@@ -34,6 +34,15 @@ export type ComparisonOutcome =
 export type CompareOptions = {
   /** pixelmatch threshold in [0,1]; lower = stricter. Default 0.1. */
   readonly threshold?: number;
+  /**
+   * Whether anti-aliasing differences count as diff pixels. Default
+   * `true` (count them). Set `false` for design-fidelity comparisons
+   * where the renderer and the baseline rasteriser produce slightly
+   * different sub-pixel coverage on shape edges — excluding AA lets
+   * axis-aligned vector shapes hit ~0.0% diff so any residual signal
+   * is real geometry / paint / stroke divergence.
+   */
+  readonly includeAA?: boolean;
 };
 
 /** Pixel-diff `actualPng` against `expectedPng`. */
@@ -58,7 +67,7 @@ export function comparePng(
     diff.data,
     actual.width,
     actual.height,
-    { threshold: options.threshold ?? 0.1 },
+    { threshold: options.threshold ?? 0.1, includeAA: options.includeAA ?? true },
   );
   const total = actual.width * actual.height;
   const diffPng = PNG.sync.write(diff);

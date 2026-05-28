@@ -26,7 +26,7 @@
  *     as any other node so they integrate cleanly with auto-layout
  *     parents.
  */
-import type { FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { figmaFontToQuery, isItalic } from "@higma-document-models/fig/font";
 import type { TokenIndex } from "../../tokens";
@@ -38,15 +38,16 @@ import { imageElementForNode } from "../style/paint";
 import { absorbBackgroundDecoration } from "../style/decoration";
 import { isPlainRule } from "../style/rule";
 import type { PropBindings } from "../plan/prop-bindings";
-import { componentTargetForInstance, SYNTHETIC_TEXT_PREFIX, variantValueForInstance } from "../plan/registry";
+import { componentTargetForInstance, SYNTHETIC_TEXT_PREFIX, SYNTHETIC_VARIANT_PREFIX, variantValueForInstance } from "../plan/registry";
 import type { FigDocumentContext } from "@higma-document-io/fig/context";
-import { emitMergedVectorSvg, emitVectorSvg, isVectorOnlyContainer, isVectorShaped } from "../svg/svg";
+import { collectPathsFor, emitMergedVectorSvg, emitVectorSvg, isVectorOnlyContainer, isVectorShaped } from "../svg/svg";
 import { hasOverrides, resolveTextRuns } from "../text/text-runs";
 import type { InferenceResult } from "../layout/infer-layout";
 import { inferLayout } from "../layout/infer-layout";
 import { collapseChain } from "../layout/collapse";
 import type { ReparentResult } from "../layout/reparent";
 import { guidToString } from "@higma-document-models/fig/domain";
+import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import type { FigPaint } from "@higma-document-models/fig/types";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
 import { el, expr, exprProp, flagProp, strProp, styleProp, text } from "../../lib/jsx-tree/builder";
@@ -100,6 +101,28 @@ export type EmitContext = {
    * relative import paths.
    */
   readonly emittingFile: string;
+  /**
+   * The guid string of the source node whose body the current emit
+   * pass is rendering (the FRAME for a page or the SYMBOL /
+   * COMPONENT_SET for a component file). Used by the synthetic-prop
+   * forwarding logic to tell SYMBOL-body emission ("forward the
+   * outer prop into the inner INSTANCE") from per-call-site
+   * emission ("bake the override character as a literal").
+   */
+  readonly emittingRootGuid: string;
+  /**
+   * For the currently-emitting SYMBOL body: map from inner-
+   * descendant guid → number of distinct override values authored
+   * by sibling INSTANCEs inside this SYMBOL body. When the count is
+   * 1, all sibling INSTANCEs supply the same value and the SYMBOL's
+   * own prop default captures it — inner-INSTANCE call sites can
+   * safely forward the outer prop. When the count is ≥ 2, the
+   * SYMBOL author wrote distinct sibling values and no single prop
+   * can carry them all; inner-INSTANCE call sites emit literals.
+   * Empty for pages and for SYMBOLs whose body has no authored
+   * textData override.
+   */
+  readonly authoredTextOverrideDistinctValueCount: ReadonlyMap<string, number>;
   /** Imports collected as a side-effect — `import { Name } from "./foo"`. */
   readonly imports: Map<string, string>;
   /**
@@ -126,6 +149,7 @@ function styleInputsOf(context: EmitContext): StyleInputs {
     imageResolver: context.imageResolver,
     childrenOf: (node) => childrenOfEmitNode(node, context),
     textBoundGuids: textBoundGuidsOf(context.propBindings),
+    imageFillOverrideTargets: context.registry.imageFillOverrideTargets,
   };
 }
 
@@ -194,7 +218,174 @@ function isRendered(node: FigNode): boolean {
   if (NON_RENDERED_TYPES.has(node.type.name)) {
     return false;
   }
+  // Figma mask-children carry `mask: true`. They don't paint
+  // themselves — they only clip their following siblings. The mask
+  // application is handled by `applyMaskClipToFollowingSiblings`
+  // before children are emitted; here we drop the mask from the
+  // visible-children list so it never produces ink.
+  if (isFigmaMaskNode(node)) {
+    return false;
+  }
   return true;
+}
+
+function isFigmaMaskNode(node: FigNode): boolean {
+  return (node as { readonly mask?: boolean }).mask === true;
+}
+
+/**
+ * When a container's children include a Figma mask vector
+ * (`mask: true`), build the CSS `clip-path` value that confines the
+ * remaining children to the mask's shape. Returns `undefined` when
+ * no mask is present or the mask geometry is unreadable.
+ *
+ * The mask is reduced to ONE SVG path string in container-local
+ * coordinates. The mask vector's own `transform` translates the
+ * geometry into the container's coord space; we apply that
+ * translation when building `M`/`L`/`C` commands so the
+ * `clip-path: path(...)` value aligns with the children CSS layout.
+ */
+function computeFigmaMaskClipPath(
+  children: readonly FigNode[],
+  context: EmitContext,
+): string | undefined {
+  for (const child of children) {
+    if (!isFigmaMaskNode(child)) {
+      continue;
+    }
+    const paths = collectPathsFor(child, context.source.blobs);
+    if (paths.length === 0) {
+      continue;
+    }
+    const tx = child.transform?.m02 ?? 0;
+    const ty = child.transform?.m12 ?? 0;
+    const m00 = child.transform?.m00 ?? 1;
+    const m01 = child.transform?.m01 ?? 0;
+    const m10 = child.transform?.m10 ?? 0;
+    const m11 = child.transform?.m11 ?? 1;
+    const segments: string[] = [];
+    for (const p of paths) {
+      // `decodeBlobToSvgPath` (called by collectPathsFor) emits an
+      // SVG `d` string in the mask vector's *own* coordinate space.
+      // To apply it as `clip-path: path(...)` on the container we
+      // need the path expressed in the container's coordinate
+      // space. The cleanest way is `path("M(...) ...")` with the
+      // child's affine applied per command.
+      const translated = applyAffineToSvgPathD(p.d, m00, m01, m10, m11, tx, ty);
+      if (translated) {
+        segments.push(translated);
+      }
+    }
+    if (segments.length === 0) {
+      continue;
+    }
+    return `path('${segments.join(" ")}')`;
+  }
+  return undefined;
+}
+
+/**
+ * Apply a 2x3 affine transform to an SVG path-`d` string by
+ * mapping each absolute command's anchor points through the
+ * transform. Supports M / L / H / V / C / Q / S / T / Z (the set
+ * Figma's exporter actually emits via `decodeBlobToSvgPath`).
+ */
+function applyAffineToSvgPathD(
+  d: string,
+  m00: number,
+  m01: number,
+  m10: number,
+  m11: number,
+  tx: number,
+  ty: number,
+): string {
+  const map = (x: number, y: number): { x: number; y: number } => ({
+    x: m00 * x + m01 * y + tx,
+    y: m10 * x + m11 * y + ty,
+  });
+  const tokens = d.match(/[MLHVCQSTAZmlhvcqstaz]|-?\d*\.?\d+(?:e-?\d+)?/g) ?? [];
+  const out: string[] = [];
+  let i = 0;
+  let cmd = "";
+  while (i < tokens.length) {
+    const tk = tokens[i]!;
+    if (/[A-Za-z]/.test(tk)) {
+      cmd = tk;
+      out.push(tk);
+      i += 1;
+      if (cmd === "Z" || cmd === "z") {
+        continue;
+      }
+      continue;
+    }
+    // numeric token: handle the current command's parameter set
+    const upper = cmd.toUpperCase();
+    if (upper === "M" || upper === "L" || upper === "T") {
+      const x = Number(tokens[i]!);
+      const y = Number(tokens[i + 1]!);
+      const p = map(x, y);
+      out.push(`${formatPathNum(p.x)} ${formatPathNum(p.y)}`);
+      i += 2;
+    } else if (upper === "H") {
+      const x = Number(tokens[i]!);
+      const p = map(x, 0); // no y-axis info in H — assume 0 (will be wrong for non-identity rotation; OK for Figma's mask translations)
+      out.push(`${formatPathNum(p.x)}`);
+      i += 1;
+    } else if (upper === "V") {
+      const y = Number(tokens[i]!);
+      const p = map(0, y);
+      out.push(`${formatPathNum(p.y)}`);
+      i += 1;
+    } else if (upper === "C") {
+      const x1 = Number(tokens[i]!);
+      const y1 = Number(tokens[i + 1]!);
+      const x2 = Number(tokens[i + 2]!);
+      const y2 = Number(tokens[i + 3]!);
+      const x = Number(tokens[i + 4]!);
+      const y = Number(tokens[i + 5]!);
+      const p1 = map(x1, y1);
+      const p2 = map(x2, y2);
+      const p = map(x, y);
+      out.push(`${formatPathNum(p1.x)} ${formatPathNum(p1.y)} ${formatPathNum(p2.x)} ${formatPathNum(p2.y)} ${formatPathNum(p.x)} ${formatPathNum(p.y)}`);
+      i += 6;
+    } else if (upper === "Q" || upper === "S") {
+      const x1 = Number(tokens[i]!);
+      const y1 = Number(tokens[i + 1]!);
+      const x = Number(tokens[i + 2]!);
+      const y = Number(tokens[i + 3]!);
+      const p1 = map(x1, y1);
+      const p = map(x, y);
+      out.push(`${formatPathNum(p1.x)} ${formatPathNum(p1.y)} ${formatPathNum(p.x)} ${formatPathNum(p.y)}`);
+      i += 4;
+    } else if (upper === "A") {
+      // Arc command — preserve rx, ry, rotation, large-arc, sweep
+      // flags verbatim and transform only the end point. This is
+      // imperfect under shear/scale but matches the common case
+      // (pure translation) Figma masks use.
+      const rx = Number(tokens[i]!);
+      const ry = Number(tokens[i + 1]!);
+      const rot = Number(tokens[i + 2]!);
+      const largeArc = Number(tokens[i + 3]!);
+      const sweep = Number(tokens[i + 4]!);
+      const x = Number(tokens[i + 5]!);
+      const y = Number(tokens[i + 6]!);
+      const p = map(x, y);
+      out.push(`${formatPathNum(rx)} ${formatPathNum(ry)} ${formatPathNum(rot)} ${largeArc} ${sweep} ${formatPathNum(p.x)} ${formatPathNum(p.y)}`);
+      i += 7;
+    } else {
+      // Unknown — copy through.
+      out.push(tk);
+      i += 1;
+    }
+  }
+  return out.join(" ");
+}
+
+function formatPathNum(n: number): string {
+  if (!Number.isFinite(n)) {
+    return "0";
+  }
+  return Math.round(n * 1000) / 1000 + "";
 }
 
 /**
@@ -310,6 +501,39 @@ function addBias(
   return { dx: current.dx + dx, dy: current.dy + dy };
 }
 
+function nodeHasOwnFillGeometry(node: FigNode): boolean {
+  const fg = (node as { readonly fillGeometry?: readonly unknown[] }).fillGeometry;
+  return Array.isArray(fg) && fg.length > 0;
+}
+
+function emitVectorLeafJsx(
+  node: FigNode,
+  context: EmitContext,
+  options: EmitOptions,
+  dataAttrs: readonly JsxProp[],
+): JsxNode {
+  const svgStyle = nodeToStyle(
+    node,
+    styleInputsOf(context),
+    options.rootMode,
+    options.parentLayout,
+    options.offsetBias,
+    undefined,
+    parentContextOf(options),
+  );
+  const transform = transformForNode(node, options.rootMode);
+  const baseProps: JsxProp[] = [...dataAttrs, styleAsProp(svgStyle, transform)];
+  const svg = emitVectorSvg(
+    node,
+    { source: context.source, index: context.index, childrenOf: (candidate) => childrenOfEmitNode(candidate, context), imageResolver: context.imageResolver },
+    baseProps,
+  );
+  if (svg !== undefined) {
+    return svg;
+  }
+  return el("div", { props: baseProps });
+}
+
 function emitVectorOnlyContainerJsx(
   node: FigNode,
   context: EmitContext,
@@ -335,7 +559,7 @@ function emitVectorOnlyContainerJsx(
   const transform = transformForNode(node, options.rootMode);
   const wrapperProps: JsxProp[] = [...dataAttrs];
   wrapperProps.push(styleAsProp(svgStyle, transform));
-  const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index, childrenOf }, wrapperProps);
+  const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index, childrenOf, imageResolver: context.imageResolver }, wrapperProps);
   if (merged === undefined) {
     return undefined;
   }
@@ -356,6 +580,17 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   const { rootMode, parentLayout } = options;
   const dataAttrs = dataAttributes(node, context.debugAttrs);
 
+  // BOOLEAN_OPERATION nodes (UNION / SUBTRACT / INTERSECT / EXCLUDE)
+  // carry `fillGeometry` for the resolved boolean result; rendering
+  // them as flex containers wrapped around their authored children
+  // (e.g. the three rectangles in the hamburger glyph) would
+  // re-layout the bars and discard the boolean-merged shape. When
+  // such a node has fillGeometry of its own, route through the
+  // single-vector emit path so the merged path lands in one <svg>.
+  if (rootMode === undefined && nodeHasOwnFillGeometry(node) && isVectorShaped(node)) {
+    return emitVectorLeafJsx(node, context, options, dataAttrs);
+  }
+
   // Vector-only container collapse: a plain container whose entire
   // subtree is composed of vector shapes becomes one merged SVG. The
   // merged SVG's `<path transform="translate(...)">` already encodes
@@ -374,13 +609,24 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   // inference on the remaining children — what was a 2-child overlap
   // pattern becomes a 1-child inset pattern.
   const absorbed = absorbBackgroundDecoration(node, styleInputsOf(context));
-  const baseChildren = childrenOfEmitNode(node, context)
+  const rawChildren = childrenOfEmitNode(node, context);
+  const baseChildren = rawChildren
     .filter(isRendered)
     .filter((c) => c !== absorbed.absorbed);
   const inferred = inferLayout(node, baseChildren);
 
   const computedStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, inferred, parentContextOf(options));
-  const baseStyle = mergeAbsorbedStyle(computedStyle, absorbed.style);
+  // Figma mask-child support: when the container's children include
+  // a node with `mask: true`, the mask vector's fillGeometry defines
+  // a clip applied to the remaining children. Emit it as CSS
+  // `clip-path: path('M...')` on the container so the photo
+  // clipped into a parallelogram (about-desktop "Mask group") shows
+  // the right shape instead of the full image rectangle.
+  const maskClipPath = computeFigmaMaskClipPath(rawChildren, context);
+  const baseStyle = mergeAbsorbedStyle(
+    maskClipPath !== undefined ? { ...computedStyle, clipPath: maskClipPath } : computedStyle,
+    absorbed.style,
+  );
   const transform = transformForNode(node, rootMode);
 
   // Structural image emission: when `paint.transform` carries
@@ -983,13 +1229,27 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   const wrapStyleProp = styleAsProp(mergedWrapStyle, wrapTransform);
 
   const componentProps: JsxProp[] = [];
-  const variantProp = variantPropOf(variant);
-  if (variantProp) {
-    componentProps.push(variantProp);
+  // Variant-prop forwarding: when the outer component the body
+  // currently belongs to declares a synthetic-variant prop for this
+  // INSTANCE's guid, forward that prop into the inner component so
+  // outer call sites can swap the variant. Otherwise emit the
+  // resolved variant value as a string literal.
+  const guidStr = guidToString(node.guid);
+  const outerVariantBinding = context.propBindings.get(guidStr);
+  const outerHasSyntheticVariant =
+    outerVariantBinding?.field === "OVERRIDDEN_SYMBOL_ID" && outerVariantBinding.decl.kind === "variant";
+  if (outerHasSyntheticVariant) {
+    componentProps.push(exprProp("variant", propIdentForBinding(outerVariantBinding.decl.name)));
+  } else {
+    const variantProp = variantPropOf(variant);
+    if (variantProp) {
+      componentProps.push(variantProp);
+    }
   }
   for (const p of assignmentProps(node, target, resolved, context)) {
     componentProps.push(p);
   }
+  appendCallSiteSyntheticVariantProps(componentProps, target.props, node, context, variant);
 
   const componentTag = el(target.componentName, { props: componentProps });
 
@@ -1047,22 +1307,137 @@ function resolveInstancePaintOverrides(
       return;
     }
     collectChangedPaints(baseNode, resolvedNode, context, out);
+    collectImageFillOverride(resolvedNode, context, out);
   });
   return out;
+}
+
+/**
+ * When the resolved descendant has an IMAGE fill paint and its guid
+ * is in the document's image-fill override target set, emit a CSS
+ * variable on the wrapper that supplies the image URL. The SYMBOL
+ * body uses `background: var(--bg-<guid>, <default>)` so the
+ * resulting wrapper-style + inner-style chain delivers the photo
+ * to the right descendant box.
+ */
+function collectImageFillOverride(
+  resolvedNode: FigNode,
+  context: EmitContext,
+  out: Record<string, string>,
+): void {
+  const guidStr = guidToString(resolvedNode.guid);
+  if (!context.registry.imageFillOverrideTargets.has(guidStr)) {
+    return;
+  }
+  const paints = resolvedNode.fillPaints;
+  if (!paints || paints.length === 0) {
+    return;
+  }
+  const imagePaint = paints.find((p) => p.visible !== false && (p as { readonly type?: { readonly name?: string } }).type?.name === "IMAGE");
+  if (!imagePaint) {
+    return;
+  }
+  const src = context.imageResolver(imagePaint as never);
+  if (!src) {
+    return;
+  }
+  out[`--bg-${resolvedNode.guid.sessionID}-${resolvedNode.guid.localID}`] = `url("${src}")`;
 }
 
 function symbolDescendantsByGuid(
   root: FigNode,
   childrenOf: (node: FigNode) => readonly FigNode[],
 ): ReadonlyMap<string, FigNode> {
+  return symbolDescendantsByGuidScoped(root, childrenOf, undefined);
+}
+
+type SymbolGraphDoc = {
+  readonly nodesByGuid: ReadonlyMap<string, FigNode>;
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
+};
+
+/**
+ * Index every descendant of `root` by guid, including descendants
+ * inside nested INSTANCE bodies. Without the cross-instance hop,
+ * `baseByGuid` lookups for a TEXT inside an inner SYMBOL (e.g.
+ * icon-item's button-primary INSTANCE → its inner TEXT 66:387) fall
+ * back to the materialised resolved node, which obscures whether a
+ * given INSTANCE actually overrode the descendant. `document` is
+ * required to follow INSTANCE → SYMBOL by guid; pass `undefined` when
+ * the caller already has the resolved tree in-hand and doesn't need
+ * the deep base view.
+ *
+ * Visited SYMBOL guids prevent the index from looping when a SYMBOL
+ * graph references itself or another SYMBOL that references back.
+ */
+function symbolDescendantsByGuidScoped(
+  root: FigNode,
+  childrenOf: (node: FigNode) => readonly FigNode[],
+  document: SymbolGraphDoc | undefined,
+): ReadonlyMap<string, FigNode> {
   const out = new Map<string, FigNode>();
-  function visit(node: FigNode): void {
-    for (const child of childrenOf(node)) {
-      out.set(guidToString(child.guid), child);
-      visit(child);
+  const visitedSymbols = new Set<string>();
+  function visitSymbolAndSiblingVariants(symbol: FigNode): void {
+    visit(symbol);
+    if (document === undefined) {
+      return;
+    }
+    // When the SYMBOL is a member of a variant set, also walk every
+    // authored sibling SYMBOL inside the same set so descendants that
+    // only exist in the OTHER variant (e.g. eyecatch's TEXT 28:960
+    // when the default variant is "number") still register here.
+    // Without this hop, a call-site override that variant-swaps the
+    // inner INSTANCE and overrides the swapped-in TEXT looks like an
+    // "authored" value because base lookup misses the descendant.
+    const parentGuid = symbol.parentIndex?.guid;
+    if (!parentGuid) {
+      return;
+    }
+    const parent = document.nodesByGuid.get(guidToString(parentGuid));
+    if (!parent || !isVariantSetFrame(parent)) {
+      return;
+    }
+    for (const sib of document.childrenOf(parent)) {
+      if (sib.type?.name !== "SYMBOL") {
+        continue;
+      }
+      const sibKey = guidToString(sib.guid);
+      if (visitedSymbols.has(sibKey)) {
+        continue;
+      }
+      visitedSymbols.add(sibKey);
+      visit(sib);
     }
   }
-  visit(root);
+  function visit(node: FigNode): void {
+    for (const child of childrenOf(node)) {
+      const key = guidToString(child.guid);
+      if (!out.has(key)) {
+        out.set(key, child);
+      }
+      visit(child);
+      if (document !== undefined && child.type?.name === "INSTANCE") {
+        const symbolGuid = child.symbolData?.symbolID;
+        if (symbolGuid) {
+          const symbolKey = guidToString(symbolGuid);
+          if (!visitedSymbols.has(symbolKey)) {
+            visitedSymbols.add(symbolKey);
+            const symbol = document.nodesByGuid.get(symbolKey);
+            if (symbol !== undefined) {
+              visitSymbolAndSiblingVariants(symbol);
+            }
+          }
+        }
+      }
+    }
+  }
+  if (document !== undefined && root.type?.name === "SYMBOL") {
+    const rootKey = guidToString(root.guid);
+    visitedSymbols.add(rootKey);
+    visitSymbolAndSiblingVariants(root);
+  } else {
+    visit(root);
+  }
   return out;
 }
 
@@ -1071,9 +1446,49 @@ function visitResolvedInstanceChildren(
   context: EmitContext,
   visit: (node: FigNode) => void,
 ): void {
+  visitResolvedInstanceChildrenWithScope(roots, context, visit, new Set());
+}
+
+/**
+ * Walk every node in a resolved INSTANCE subtree, descending through
+ * nested INSTANCE boundaries by re-resolving each inner INSTANCE so
+ * its own children become visible. Without re-resolution, the visitor
+ * stops at the first nested INSTANCE — the inner SYMBOL body sits
+ * behind that boundary and a per-call-site override on a TEXT inside
+ * it (e.g. icon-item → button-primary → TEXT) never reaches the
+ * synthetic-prop forwarding logic.
+ *
+ * Each visited INSTANCE guid is tracked so a cycle (the same INSTANCE
+ * reachable twice through resolved overrides) cannot send the walk
+ * into an infinite descent.
+ */
+function visitResolvedInstanceChildrenWithScope(
+  roots: readonly FigNode[],
+  context: EmitContext,
+  visit: (node: FigNode) => void,
+  visitedInstanceGuids: Set<string>,
+): void {
   for (const node of roots) {
     visit(node);
-    visitResolvedInstanceChildren(context.source.symbolResolver.childrenOfResolvedNode(node), context, visit);
+    const direct = context.source.symbolResolver.childrenOfResolvedNode(node);
+    if (direct.length > 0) {
+      visitResolvedInstanceChildrenWithScope(direct, context, visit, visitedInstanceGuids);
+    }
+    if (node.type?.name === "INSTANCE") {
+      const key = guidToString(node.guid);
+      if (visitedInstanceGuids.has(key)) {
+        continue;
+      }
+      visitedInstanceGuids.add(key);
+      try {
+        const innerResolved = context.source.symbolResolver.resolveInstance(node);
+        visitResolvedInstanceChildrenWithScope(innerResolved.children, context, visit, visitedInstanceGuids);
+      } catch {
+        // Resolution failure (e.g. external library reference) is
+        // surfaced by the resolver elsewhere; the visitor itself
+        // skips the subtree rather than aborting the outer walk.
+      }
+    }
   }
 }
 
@@ -1112,7 +1527,7 @@ function collectPaintsOverride(
   if (!originalToken) {
     return;
   }
-  const newColor = solidPaintToCss(replacement);
+  const newColor = solidPaintToCss(replacement, context);
   if (!newColor) {
     return;
   }
@@ -1123,11 +1538,41 @@ function readKiwiEnumName(value: unknown): string | undefined {
   return kiwiEnumName(value, "Kiwi enum field");
 }
 
-function solidPaintToCss(paint: FigPaint): string | undefined {
+function solidPaintToCss(paint: FigPaint, context?: EmitContext): string | undefined {
   const rawType = (paint as { readonly type?: unknown }).type;
   const typeName = readKiwiEnumName(rawType);
   if (typeName !== "SOLID") {
     return undefined;
+  }
+  // When the paint references a Figma VARIABLE (`paint.colorVar` →
+  // `alias.guid`), the paint's literal RGB is only a fallback — the
+  // effective colour is the variable's resolved value. Tokenisation
+  // built its color → id index from raw RGB, so look up via the
+  // variable's resolved value to find the matching token (e.g.
+  // `var(--color-base-text)`), and only fall through to the literal
+  // RGB when the variable can't be resolved or its colour isn't
+  // tokenised. Without this hop, a symbolOverride that swaps the
+  // POLYGON's fill to a variable-aliased dark colour renders as the
+  // override's raw stub RGB (often opaque white) and the design's
+  // theme variable is lost at the override boundary.
+  const aliasGuid = paint.colorVar?.value?.alias?.guid;
+  if (context !== undefined && aliasGuid) {
+    const resolved = resolveColorVariable(aliasGuid, context);
+    if (resolved !== undefined) {
+      const aliasToken = context.index.colorIdForPaints([variableColorAsPaint(resolved)]);
+      if (aliasToken) {
+        return `var(--${aliasToken})`;
+      }
+      const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+      const r = Math.round(resolved.r * 255);
+      const g = Math.round(resolved.g * 255);
+      const b = Math.round(resolved.b * 255);
+      const a = (resolved.a ?? 1) * opacity;
+      if (a >= 0.999) {
+        return `rgb(${r}, ${g}, ${b})`;
+      }
+      return `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`;
+    }
   }
   const solid = paint as { readonly color?: { readonly r: number; readonly g: number; readonly b: number; readonly a?: number }; readonly opacity?: number };
   const c = solid.color;
@@ -1143,6 +1588,56 @@ function solidPaintToCss(paint: FigPaint): string | undefined {
     return `rgb(${r}, ${g}, ${b})`;
   }
   return `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`;
+}
+
+/**
+ * Resolve a Figma VARIABLE alias to its concrete colour value by
+ * walking `variableDataValues`. Variables can chain (one variable
+ * aliases another); follow the chain until a literal colour appears
+ * or the chain dead-ends.
+ */
+function resolveColorVariable(
+  aliasGuid: FigGuid,
+  context: EmitContext,
+  visited: Set<string> = new Set(),
+): { readonly r: number; readonly g: number; readonly b: number; readonly a: number } | undefined {
+  const key = guidToString(aliasGuid);
+  if (visited.has(key)) {
+    return undefined;
+  }
+  visited.add(key);
+  const variable = context.source.document.nodesByGuid.get(key);
+  if (!variable) {
+    return undefined;
+  }
+  const entries = (variable as { readonly variableDataValues?: { readonly entries?: ReadonlyArray<{ readonly variableData?: { readonly value?: { readonly colorValue?: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }; readonly alias?: { readonly guid?: FigGuid } } } }> } }).variableDataValues?.entries;
+  if (!entries || entries.length === 0) {
+    return undefined;
+  }
+  // Pick the first entry's value. Figma variables can have multiple
+  // modes; without resolved-mode context this falls back to mode 0
+  // which matches what `nodesByGuid` gives us at emit time.
+  const value = entries[0]?.variableData?.value;
+  if (!value) {
+    return undefined;
+  }
+  if (value.colorValue) {
+    return { r: value.colorValue.r, g: value.colorValue.g, b: value.colorValue.b, a: value.colorValue.a ?? 1 };
+  }
+  if (value.alias?.guid) {
+    return resolveColorVariable(value.alias.guid, context, visited);
+  }
+  return undefined;
+}
+
+function variableColorAsPaint(color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }): FigPaint {
+  return {
+    type: { value: 0, name: "SOLID" },
+    color,
+    opacity: 1,
+    visible: true,
+    blendMode: { value: 1, name: "NORMAL" },
+  } as unknown as FigPaint;
 }
 
 const SCALE_EPSILON = 1e-3;
@@ -1249,14 +1744,42 @@ function appendResolvedTextProps(
   context: EmitContext,
 ): void {
   const propsByDefId = new Map(props.map((prop) => [prop.defId, prop]));
-  const baseByGuid = symbolDescendantsByGuid(resolved.effectiveSymbol, context.source.document.childrenOf);
-  visitResolvedInstanceChildren(resolved.resolvedChildren, context, (node) => {
+  const baseByGuid = symbolDescendantsByGuidScoped(
+    resolved.effectiveSymbol,
+    context.source.document.childrenOf,
+    context.source.document,
+  );
+  const emittedForGuid = new Set<string>();
+  const visitNode = (node: FigNode): void => {
     if (node.type?.name !== TEXT_NODE_TYPE) {
       return;
     }
     const guidStr = guidToString(node.guid);
+    if (emittedForGuid.has(guidStr)) {
+      return;
+    }
     const decl = propsByDefId.get(`${SYNTHETIC_TEXT_PREFIX}${guidStr}`);
     if (decl === undefined) {
+      return;
+    }
+    // Forward via outer prop when the currently-emitting SYMBOL
+    // body has the descendant covered by a single authored
+    // override value (or none). With one distinct authored value
+    // the SYMBOL's prop default carries it; forwarding keeps inner
+    // call sites pluggable from outside.
+    //
+    // When the SYMBOL body has multiple sibling INSTANCEs that
+    // override the same descendant with different values (e.g.
+    // footer's three icon-item INSTANCEs each writing a different
+    // label into TEXT 66:387), no single outer prop can represent
+    // all of them. Fall through to emit the resolved character
+    // literal so each `<IconItem>` call site bakes the value the
+    // SYMBOL author wrote.
+    const outerBinding = context.propBindings.get(guidStr);
+    const distinctOverrideValues = context.authoredTextOverrideDistinctValueCount.get(guidStr) ?? 0;
+    if (outerBinding?.field === "TEXT_DATA" && distinctOverrideValues < 2) {
+      out.push(exprProp(decl.name, propIdentForBinding(outerBinding.decl.name)));
+      emittedForGuid.add(guidStr);
       return;
     }
     const characters = textCharacters(node);
@@ -1264,8 +1787,178 @@ function appendResolvedTextProps(
     if (characters === baseCharacters) {
       return;
     }
-    out.push(strProp(decl.name, characters));
-  });
+    out.push(textValueProp(decl.name, characters));
+    emittedForGuid.add(guidStr);
+  };
+  visitResolvedInstanceChildren(resolved.resolvedChildren, context, visitNode);
+  // The resolved tree only materialises the *currently selected*
+  // variant — for a variant-set INSTANCE whose default is "number"
+  // (TEXT 70:934 only), the resolved tree never exposes "eyecatch"'s
+  // TEXT 28:960. But the outer component's prop list DOES declare a
+  // synthetic prop for that guid (because of `visitDescendantsInner`'s
+  // variant-set sibling walk in prop-bindings.ts), so its forwarding
+  // must fire here too. Walk every authored sibling variant's body
+  // directly so each forwarded prop reaches its inner counterpart
+  // regardless of which variant the SYMBOL author defaulted to.
+  visitVariantSetSiblingBodies(resolved.effectiveSymbol, context, visitNode);
+}
+
+function visitVariantSetSiblingBodies(
+  symbol: FigNode,
+  context: EmitContext,
+  visit: (descendant: FigNode) => void,
+): void {
+  const parentGuid = symbol.parentIndex?.guid;
+  if (!parentGuid) {
+    return;
+  }
+  const document = context.source.document;
+  const parent = document.nodesByGuid.get(guidToString(parentGuid));
+  if (!parent || !isVariantSetFrame(parent)) {
+    return;
+  }
+  const visited = new Set<string>([guidToString(symbol.guid)]);
+  function walk(node: FigNode): void {
+    for (const child of document.childrenOf(node)) {
+      visit(child);
+      walk(child);
+    }
+  }
+  for (const sib of document.childrenOf(parent)) {
+    if (sib.type?.name !== "SYMBOL") {
+      continue;
+    }
+    const sibKey = guidToString(sib.guid);
+    if (visited.has(sibKey)) {
+      continue;
+    }
+    visited.add(sibKey);
+    walk(sib);
+  }
+}
+
+/**
+ * Emit a JSX prop carrying a string value. When the value contains
+ * a newline, use the expression form (`name={"..."}`) so the
+ * embedded `\n` is interpreted as a real newline by the TypeScript
+ * string literal — JSX attribute strings (`name="..."`) read `\n`
+ * as the literal two-character sequence backslash-n, which then
+ * renders as visible "\n" text inside a `whiteSpace: pre-line`
+ * span instead of breaking the line.
+ */
+function textValueProp(name: string, value: string): JsxProp {
+  if (value.includes("\n") || value.includes("\r")) {
+    return exprProp(name, JSON.stringify(value));
+  }
+  return strProp(name, value);
+}
+
+/**
+ * For each synthetic-variant prop the inner component declares, look
+ * up the corresponding INSTANCE descendant in the resolved tree of
+ * this outer INSTANCE call site. If the resolved INSTANCE's
+ * `overriddenSymbolID` (or its `symbolID`) selects a different
+ * variant than the inner component's prop default, emit a literal
+ * `variant_<innerGuid>` prop. When the outer component the body
+ * currently belongs to ALSO declares a synthetic variant prop for the
+ * same inner-INSTANCE guid, forward via the outer prop name instead
+ * so consumers further up can keep swapping.
+ */
+function appendCallSiteSyntheticVariantProps(
+  out: JsxProp[],
+  innerProps: readonly { readonly defId: string; readonly name: string; readonly kind: string; readonly defaultValue?: unknown }[],
+  instance: FigNode,
+  context: EmitContext,
+  resolvedRootVariant: string | undefined,
+): void {
+  void resolvedRootVariant;
+  for (const prop of innerProps) {
+    if (!prop.defId.startsWith(SYNTHETIC_VARIANT_PREFIX) || prop.kind !== "variant") {
+      continue;
+    }
+    const innerGuidStr = prop.defId.slice(SYNTHETIC_VARIANT_PREFIX.length);
+    // Outer-binding forwarding: if the outer component body that's
+    // currently emitting also exposes a synthetic variant prop for
+    // the same inner-INSTANCE guid, forward via that name so the
+    // outer consumer can keep choosing the variant.
+    const outerBinding = context.propBindings.get(innerGuidStr);
+    const outerForwards = outerBinding?.field === "OVERRIDDEN_SYMBOL_ID" && outerBinding.decl.kind === "variant";
+    if (outerForwards) {
+      out.push(exprProp(prop.name, propIdentForBinding(outerBinding.decl.name)));
+      continue;
+    }
+    // Otherwise: emit the literal selected variant from the resolved
+    // tree of THIS outer INSTANCE, if it differs from the prop's
+    // default. Skip when the resolved variant equals the inner
+    // component's prop default.
+    const resolvedInner = findResolvedInstanceByGuid(context, instance, innerGuidStr);
+    if (resolvedInner === undefined) {
+      continue;
+    }
+    const innerSymbolGuid = resolvedInner.overriddenSymbolID ?? resolvedInner.symbolData?.symbolID;
+    if (!innerSymbolGuid) {
+      continue;
+    }
+    const variantKey = resolveVariantKeyForSymbol(context, innerSymbolGuid);
+    if (variantKey === undefined) {
+      continue;
+    }
+    if (variantKey === prop.defaultValue) {
+      continue;
+    }
+    out.push(strProp(prop.name, variantKey));
+  }
+}
+
+function findResolvedInstanceByGuid(
+  context: EmitContext,
+  outerInstance: FigNode,
+  innerGuidStr: string,
+): FigNode | undefined {
+  let found: FigNode | undefined;
+  try {
+    const resolved = context.source.symbolResolver.resolveInstance(outerInstance);
+    visitResolvedInstanceChildren(resolved.children, context, (n) => {
+      if (found !== undefined) {
+        return;
+      }
+      if (n.type?.name === "INSTANCE" && guidToString(n.guid) === innerGuidStr) {
+        found = n;
+      }
+    });
+  } catch {
+    // External / unresolvable reference — no match.
+  }
+  return found;
+}
+
+function resolveVariantKeyForSymbol(
+  context: EmitContext,
+  symbolGuid: FigGuid,
+): string | undefined {
+  const symbol = context.source.document.nodesByGuid.get(guidToString(symbolGuid));
+  if (!symbol) {
+    return undefined;
+  }
+  const parentGuid = symbol.parentIndex?.guid;
+  if (!parentGuid) {
+    return undefined;
+  }
+  const parent = context.source.document.nodesByGuid.get(guidToString(parentGuid));
+  if (!parent) {
+    return undefined;
+  }
+  const target = context.registry.components.get(guidToString(parent.guid));
+  if (!target) {
+    return undefined;
+  }
+  const symbolKey = guidToString(symbolGuid);
+  for (const [key, variant] of target.variants) {
+    if (guidToString(variant.guid) === symbolKey) {
+      return key;
+    }
+  }
+  return undefined;
 }
 
 function formatAssignmentProp(
@@ -1278,7 +1971,7 @@ function formatAssignmentProp(
       if (typeof chars !== "string") {
         return undefined;
       }
-      return strProp(decl.name, chars);
+      return textValueProp(decl.name, chars);
     }
     case "boolean": {
       if (typeof value.boolValue !== "boolean") {

@@ -96,7 +96,7 @@ export function firstSolidPaint(paints: readonly FigPaint[] | undefined): FigSol
 /** Create a Kiwi solid paint payload for editor-authored paint edits. */
 export function solidPaint(color: FigColor, current: FigSolidPaint | undefined): FigSolidPaint {
   return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+    type: toEnumValue("SOLID", PAINT_TYPE_VALUES)!,
     color,
     opacity: current?.opacity ?? 1,
     visible: current?.visible ?? true,

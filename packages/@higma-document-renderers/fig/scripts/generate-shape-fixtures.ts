@@ -61,6 +61,7 @@ type ShapeChild = {
   rotation?: number;
   strokeCap?: "NONE" | "ROUND" | "SQUARE" | "ARROW_LINES" | "ARROW_EQUILATERAL";
   dashPattern?: number[];
+  opacity?: number;
 };
 
 type ShapeFrameData = {
@@ -342,6 +343,13 @@ const SHAPE_FRAMES: ShapeFrameData[] = [
   // counter-example here, an INSIDE-only test would not catch a
   // regression that silently flips alignment.
   {
+    // Frame opacity 0.25 is load-bearing for the visual binding:
+    // Figma's SVG export of this layer ships `<path opacity="0.25" …>`
+    // (verified bit-for-bit against `actual/polygon-hex-stroke-outside.svg`).
+    // The user authored the polygon at 25 % opacity in Figma to keep the
+    // OUTSIDE-aligned stroke visually distinct from the underlying
+    // fillless shape, so the renderer must read the same value back out
+    // of the .fig to land at the documented pixel diff.
     name: "polygon-hex-stroke-outside", width: 140, height: 140, background: "#ffffff",
     children: [
       {
@@ -350,6 +358,7 @@ const SHAPE_FRAMES: ShapeFrameData[] = [
         sides: 6, cornerRadius: 4,
         stroke: { r: 0.29, g: 0.73, b: 0.74 },
         strokeWeight: 2, strokeAlign: "OUTSIDE",
+        opacity: 0.25,
       },
     ],
   },
@@ -456,7 +465,7 @@ function addShapeChild(
         state, context, pageGuid, parentGuid,
         spec: {
           visible: true,
-          opacity: 1,
+          opacity: child.opacity ?? 1,
           type: "REGULAR_POLYGON",
           name: child.name,
           x: child.x, y: child.y,

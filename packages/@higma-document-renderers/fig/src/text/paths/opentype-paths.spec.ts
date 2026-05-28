@@ -45,29 +45,26 @@ describe("figmaTextOutlineBaselineY", () => {
 });
 
 describe("extractTextPathData", () => {
-  it("uses the same Figma outline baseline projection as derived glyph paths", () => {
+  it("passes the float baseline straight through to opentype.js — Figma's SVG export keeps the fractional baseline for font-driven outlines", () => {
     const recordedBaselines: number[] = [];
     const result = extractTextPathData({
-      lines: ["A"],
+      lines: [{ text: "A", x: 3, y: 9.5546875 }],
       font: recordingFont(recordedBaselines),
       fontSize: 10,
-      x: 3,
-      baseY: 9.5546875,
-      lineHeight: 12,
       align: "LEFT",
     });
 
-    expect(recordedBaselines).toEqual([10]);
+    expect(recordedBaselines).toEqual([9.5546875]);
     const command = result.glyphContours[0]?.commands[0];
     if (command?.type !== "M") {
       throw new Error("expected first glyph command");
     }
-    expect(command).toEqual({ type: "M", x: 3, y: 10 });
+    expect(command).toEqual({ type: "M", x: 3, y: 9.5546875 });
   });
 });
 
 describe("createUnderlineRect", () => {
-  it("uses the projected outline baseline for decoration geometry", () => {
+  it("anchors the underline to the same fractional baseline the font-driven path emit uses", () => {
     const rect = createUnderlineRect({
       text: "A",
       font: recordingFont([]),
@@ -77,11 +74,19 @@ describe("createUnderlineRect", () => {
       align: "LEFT",
     });
 
+    // recordingFont ships no `post` table, so the underline falls
+    // back to the canonical ratios (position = 0.15 × fontSize,
+    // thickness = 0.05 × fontSize). The rectangle TOP sits at
+    // `baseline + positionPx + thicknessPx / 2` per the empirical
+    // Figma-export rule documented in `createUnderlineRect`.
+    //   positionPx = 10 × 0.15 = 1.5
+    //   thicknessPx = 10 × 0.05 = 0.5
+    //   y_top = 9.5546875 + 1.5 + 0.25 = 11.3046875
     expect(rect).toEqual({
       x: 3,
-      y: 11.9,
+      y: 11.3046875,
       width: 10,
-      height: 0.68,
+      height: 0.5,
     });
   });
 });

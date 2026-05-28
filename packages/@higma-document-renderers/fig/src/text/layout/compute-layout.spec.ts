@@ -24,6 +24,9 @@ function makeProps(overrides: Partial<ExtractedTextProps> = {}): ExtractedTextPr
     textAutoResize: "WIDTH_AND_HEIGHT",
     textDecoration: "NONE",
     size: { width: 200, height: 40 },
+    paragraphSpacing: 0,
+    paragraphIndent: 0,
+    textCase: "ORIGINAL",
     ...overrides,
   };
 }

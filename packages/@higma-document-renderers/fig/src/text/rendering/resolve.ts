@@ -15,6 +15,7 @@ import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
 import { computeTextLayout, extractTextProps, getFillColorAndOpacity } from "../layout";
 import type { ExtractedTextProps, TextLayout, TextLayoutSourceLine, TextNodeInput } from "../layout";
 import { extractDerivedTextPathData, extractTextPathData, hasDerivedGlyphs } from "../paths";
+import { resolveTextCaseGlyph } from "../paths/small-caps-glyph";
 import type { PathContour } from "../paths";
 import { resolveTextRuns } from "../runs/resolve";
 import type { TextRun } from "@higma-document-renderers/fig/scene-graph";
@@ -59,6 +60,7 @@ function buildLineMeasurer(
   if (font === undefined) {
     return undefined;
   }
+  const textCase = props.textCase;
   return (text: string): readonly number[] => {
     // Variable fonts re-derive glyph metrics from `opsz`; sync the
     // axis to the rendered font-size before reading advance widths
@@ -68,8 +70,14 @@ function buildLineMeasurer(
     const letterSpacing = props.letterSpacing ?? 0;
     const widths: number[] = [];
     for (let i = 0; i < text.length; i += 1) {
-      const glyph = font.charToGlyph(text[i]!);
-      const advance = (glyph.advanceWidth ?? 0) * scale;
+      // Route per-character glyph lookup through `resolveTextCaseGlyph`
+      // so small-caps substitution (smcp / c2sc) and the
+      // synthesised-fallback shrink ratio are reflected in the
+      // measured advance widths — the layout step's wrap and line-fit
+      // arithmetic then sees the same glyph-cell widths the path
+      // emitter will draw with, keeping measure and paint coherent.
+      const resolved = resolveTextCaseGlyph(font, text[i]!, textCase);
+      const advance = (resolved.glyph.advanceWidth ?? 0) * scale * resolved.fontSizeScale;
       // Letter spacing pads the *trailing* edge of each glyph,
       // matching CSS `letter-spacing` semantics. The last character
       // gets no trailing pad \u2014 otherwise the rendered width drifts
@@ -870,23 +878,74 @@ function resolveDerivedDescenderRatio(
 }
 
 /**
- * Read the typographic ascender from an `AbstractFont`. Prefers
- * `OS/2.sTypoAscender` (CSS Inline L3 convention) with the legacy
- * `font.ascender` (= `hhea.ascender`) as alternative for fonts without
- * an OS/2 table.
+ * `OS/2.fsSelection` bit 7 — the spec-defined `USE_TYPO_METRICS`
+ * opt-in. Per CSS Inline L3 §5.5 the renderer must consult
+ * `sTypoAscender`/`sTypoDescender` only when this bit is set;
+ * otherwise the legacy `hhea.ascender`/`hhea.descender` pair drives
+ * line layout. Pulled into a named constant so the bit-test reads
+ * the same in both ascender and descender helpers.
  */
-function typoAscenderUnits(font: { readonly ascender: number; readonly tables?: { readonly os2?: { readonly sTypoAscender?: number } } }): number {
-  const typo = font.tables?.os2?.sTypoAscender;
-  return typeof typo === "number" ? typo : font.ascender;
+const OS2_USE_TYPO_METRICS_MASK = 0x80;
+
+/**
+ * Whether the font opts into CSS Inline L3 typo metrics. A font with
+ * the bit clear (or with no OS/2 table at all) keeps the legacy hhea
+ * pair — critical for CJK faces like Noto Sans JP that ship a tight
+ * sTypoAscender (880u) but a tall hhea ascender (1160u) sized to
+ * match the larger CJK glyph extents. Browsers and Figma's SVG
+ * exporter both follow the same rule, so matching them here removes
+ * the 1px first-line baseline drift the unconditional sTypo path
+ * leaves behind on those fonts.
+ */
+function fontUsesTypoMetrics(font: { readonly tables?: { readonly os2?: { readonly fsSelection?: number } } }): boolean {
+  const fsSelection = font.tables?.os2?.fsSelection;
+  if (typeof fsSelection !== "number") {
+    return false;
+  }
+  return (fsSelection & OS2_USE_TYPO_METRICS_MASK) !== 0;
+}
+
+/**
+ * Read the typographic ascender from an `AbstractFont`. Uses
+ * `OS/2.sTypoAscender` only when the font opts into typo metrics via
+ * `fsSelection` bit 7 (`USE_TYPO_METRICS`); otherwise falls back to
+ * `hhea.ascender` (exposed via `font.ascender` in opentype.js) — the
+ * CSS Inline L3 §5.5 fallback that browsers and Figma both honour.
+ * The legacy `font.ascender` itself remains the final fallback for
+ * fonts that ship no OS/2 table at all.
+ */
+function typoAscenderUnits(font: { readonly ascender: number; readonly tables?: { readonly hhea?: { readonly ascender?: number }; readonly os2?: { readonly sTypoAscender?: number; readonly fsSelection?: number } } }): number {
+  if (fontUsesTypoMetrics(font)) {
+    const typo = font.tables?.os2?.sTypoAscender;
+    if (typeof typo === "number") {
+      return typo;
+    }
+  }
+  const hhea = font.tables?.hhea?.ascender;
+  if (typeof hhea === "number") {
+    return hhea;
+  }
+  return font.ascender;
 }
 
 /**
  * Read the typographic descender (negative in font units). Same
- * `sTypoDescender`-over-`hhea` precedence as `typoAscenderUnits`.
+ * `USE_TYPO_METRICS`-gated precedence as `typoAscenderUnits`: the
+ * sTypoDescender wins only when the font sets `fsSelection` bit 7;
+ * otherwise `hhea.descender` (then the legacy `font.descender`).
  */
-function typoDescenderUnits(font: { readonly descender: number; readonly tables?: { readonly os2?: { readonly sTypoDescender?: number } } }): number {
-  const typo = font.tables?.os2?.sTypoDescender;
-  return typeof typo === "number" ? typo : font.descender;
+function typoDescenderUnits(font: { readonly descender: number; readonly tables?: { readonly hhea?: { readonly descender?: number }; readonly os2?: { readonly sTypoDescender?: number; readonly fsSelection?: number } } }): number {
+  if (fontUsesTypoMetrics(font)) {
+    const typo = font.tables?.os2?.sTypoDescender;
+    if (typeof typo === "number") {
+      return typo;
+    }
+  }
+  const hhea = font.tables?.hhea?.descender;
+  if (typeof hhea === "number") {
+    return hhea;
+  }
+  return font.descender;
 }
 
 /**
@@ -1023,17 +1082,21 @@ function resolveFontGlyphRendering(params: {
   if (!font) {
     return undefined;
   }
+  const sourceStarts = lineSourceStarts(displayProps.characters, layout.lines);
+  const positionedLines = layout.lines.map((line, index) => ({
+    text: line.text,
+    x: line.x,
+    y: line.y,
+    sourceStart: sourceStarts[index] ?? 0,
+  }));
   const pathData = extractTextPathData({
-    lines: layout.lines.map((line) => line.text),
+    lines: positionedLines,
     font,
     fontSize: displayProps.fontSize,
-    x: firstLine.x,
-    baseY: firstLine.y,
-    lineHeight: layout.lineHeight,
     align: displayProps.textAlignHorizontal,
     letterSpacing: displayProps.letterSpacing,
     textDecoration: displayProps.textDecoration,
-    lineSourceStarts: lineSourceStarts(displayProps.characters, layout.lines),
+    textCase: displayProps.textCase,
     fontForCharacter: (sourceIndex) => {
       const run = runForCharacter(runs, sourceIndex);
       if (run?.font === undefined) {
@@ -1122,13 +1185,24 @@ function resolveTextLayoutFromProps(
     truncation,
     measureCharWidths,
   });
-  const layout = computeTextLayout({
+  const rawLayout = computeTextLayout({
     props: displayProps,
     lines: explicitLines,
     ascenderRatio,
     descenderRatio,
     measureCharWidths,
   });
+  // Fallback height-based truncation: Figma's `truncationStartIndex` is
+  // only present when the file passed through the editor (which runs
+  // layout + truncation before persisting). Builder-authored `.fig`s
+  // ship with `textTruncation=ENDING` but no resolved start index, so
+  // the renderer has to compute the cut itself.
+  const layout = applyHeightTruncationFallback(
+    rawLayout,
+    node.textTruncation ?? node.textData?.textTruncation,
+    displayProps,
+    dtd,
+  );
   return {
     props,
     displayProps,
@@ -1138,6 +1212,44 @@ function resolveTextLayoutFromProps(
     ascenderRatio,
     descenderRatio,
   };
+}
+
+/**
+ * Truncate the laid-out lines to what fits inside the text box's
+ * declared height when `textTruncation=ENDING` is authored on the node
+ * but `derivedTextData.truncationStartIndex` is absent (builder-
+ * authored `.fig` — Figma's editor would have written the index but
+ * the builder pipeline has no layout step that does so).
+ *
+ * The trim is line-count based, not character based: `lineHeight`
+ * defines the visible row height, so `floor(size.height / lineHeight)`
+ * lines remain visible. An ellipsis (`U+2026`) is appended to the
+ * last surviving line's text — the path emitter then renders the
+ * marker as part of that line's glyph stream.
+ */
+function applyHeightTruncationFallback(
+  layout: ReturnType<typeof computeTextLayout>,
+  textTruncation: KiwiEnumValue | string | undefined,
+  displayProps: ExtractedTextProps,
+  dtd: FigDerivedTextData | undefined,
+): ReturnType<typeof computeTextLayout> {
+  const mode = typeof textTruncation === "string" ? textTruncation : textTruncation?.name;
+  if (mode !== "ENDING") { return layout; }
+  if (typeof dtd?.truncationStartIndex === "number" && dtd.truncationStartIndex >= 0) {
+    return layout;
+  }
+  const size = displayProps.size;
+  if (!size || size.height <= 0) { return layout; }
+  if (layout.lineHeight <= 0) { return layout; }
+  const maxLines = Math.max(1, Math.floor(size.height / layout.lineHeight));
+  if (layout.lines.length <= maxLines) { return layout; }
+  const keep = layout.lines.slice(0, maxLines);
+  const lastIndex = keep.length - 1;
+  const last = keep[lastIndex];
+  const truncatedLines = keep.map((line, idx) => (
+    idx === lastIndex ? { ...line, text: `${last.text}${ELLIPSIS_CHAR}` } : line
+  ));
+  return { ...layout, lines: truncatedLines };
 }
 
 /** Resolve the canonical text layout used by renderers and editor overlays. */

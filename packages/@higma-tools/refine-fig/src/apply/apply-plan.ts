@@ -82,7 +82,7 @@ const ZERO_SUMMARY: ApplySummary = {
 };
 
 const CREATED_PHASE = { value: 0, name: "CREATED" } as const;
-const NORMAL_BLEND = { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } as const;
+const NORMAL_BLEND = toEnumValue("NORMAL", BLEND_MODE_VALUES)!;
 const REQUIRED_SHAPE_STROKE_FIELDS = {
   strokeWeight: 0,
   strokeAlign: toEnumValue("INSIDE", STROKE_ALIGN_VALUES),
@@ -184,7 +184,7 @@ function applyEnsureInternalCanvas(state: ApplyState, action: ActionEnsureIntern
   appendNode(state, {
     guid,
     phase: CREATED_PHASE,
-    type: { value: NODE_TYPE_VALUES.CANVAS, name: "CANVAS" },
+    type: toEnumValue("CANVAS", NODE_TYPE_VALUES)!,
     name: action.name,
     parentIndex: { guid: state.documentGuid, position: `refine-${guidToString(guid)}` },
     internalOnly: true,
@@ -198,14 +198,14 @@ function applyCreateFillStyleDefinition(state: ApplyState, action: ActionCreateF
   appendNode(state, {
     guid,
     phase: CREATED_PHASE,
-    type: { value: NODE_TYPE_VALUES.FRAME, name: "FRAME" },
+    type: toEnumValue("FRAME", NODE_TYPE_VALUES)!,
     name: action.name,
     ...REQUIRED_SHAPE_STROKE_FIELDS,
     parentIndex: parentIndexForInternalCanvas(state, guid),
-    styleType: { value: STYLE_TYPE_VALUES.FILL, name: "FILL" },
+    styleType: toEnumValue("FILL", STYLE_TYPE_VALUES)!,
     fillPaints: [
       {
-        type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+        type: toEnumValue("SOLID", PAINT_TYPE_VALUES)!,
         color: action.color,
         opacity: action.color.a,
         visible: true,
@@ -222,11 +222,11 @@ function applyCreateTextStyleDefinition(state: ApplyState, action: ActionCreateT
   appendNode(state, {
     guid,
     phase: CREATED_PHASE,
-    type: { value: NODE_TYPE_VALUES.FRAME, name: "FRAME" },
+    type: toEnumValue("FRAME", NODE_TYPE_VALUES)!,
     name: action.name,
     ...REQUIRED_SHAPE_STROKE_FIELDS,
     parentIndex: parentIndexForInternalCanvas(state, guid),
-    styleType: { value: STYLE_TYPE_VALUES.TEXT, name: "TEXT" },
+    styleType: toEnumValue("TEXT", STYLE_TYPE_VALUES)!,
     fontName: { family: action.fontFamily, style: action.fontStyle, postscript: "" },
     fontSize: action.fontSize,
     fontWeight: action.fontWeight,
@@ -251,7 +251,7 @@ function applyPromoteIconCluster(state: ApplyState, action: ActionPromoteIconClu
   const symbolGuid = requiredGuid(exemplar.guid, action.exemplarGuid);
   replaceNode(state, {
     ...exemplar,
-    type: { value: NODE_TYPE_VALUES.SYMBOL, name: "SYMBOL" },
+    type: toEnumValue("SYMBOL", NODE_TYPE_VALUES)!,
     name: action.clusterName,
   });
   state.promotedSymbols.set(action.clusterId, symbolGuid);
@@ -262,7 +262,7 @@ function applyPromoteIconCluster(state: ApplyState, action: ActionPromoteIconClu
     const member = requiredNode(state, memberGuid);
     replaceNode(state, {
       ...member,
-      type: { value: NODE_TYPE_VALUES.INSTANCE, name: "INSTANCE" },
+      type: toEnumValue("INSTANCE", NODE_TYPE_VALUES)!,
       name: action.clusterName,
       symbolData: { ...member.symbolData, symbolID: symbolGuid },
     });
@@ -279,7 +279,7 @@ function applyPromoteVectorCluster(state: ApplyState, action: ActionPromoteVecto
   appendNode(state, {
     guid: symbolGuid,
     phase: CREATED_PHASE,
-    type: { value: NODE_TYPE_VALUES.SYMBOL, name: "SYMBOL" },
+    type: toEnumValue("SYMBOL", NODE_TYPE_VALUES)!,
     name: action.clusterName,
     ...REQUIRED_SHAPE_STROKE_FIELDS,
     size: exemplar.size,
@@ -294,7 +294,7 @@ function applyPromoteVectorCluster(state: ApplyState, action: ActionPromoteVecto
     const member = requiredNode(state, memberGuid);
     replaceNode(state, {
       ...member,
-      type: { value: NODE_TYPE_VALUES.INSTANCE, name: "INSTANCE" },
+      type: toEnumValue("INSTANCE", NODE_TYPE_VALUES)!,
       name: action.clusterName,
       symbolData: { ...member.symbolData, symbolID: symbolGuid },
     });
@@ -317,7 +317,7 @@ function applyGroupAsVariantSet(state: ApplyState, action: ActionGroupAsVariantS
   appendNode(state, {
     guid: setGuid,
     phase: CREATED_PHASE,
-    type: { value: NODE_TYPE_VALUES.FRAME, name: "FRAME" },
+    type: toEnumValue("FRAME", NODE_TYPE_VALUES)!,
     name: action.setName,
     ...REQUIRED_SHAPE_STROKE_FIELDS,
     parentIndex: firstSymbol.parentIndex ?? parentIndexForInternalCanvas(state, setGuid),
@@ -348,16 +348,13 @@ function applySetLayout(state: ApplyState, action: ActionSetLayout): void {
   const node = requiredNode(state, action.nodeGuid);
   replaceNode(state, {
     ...node,
-    stackMode: { value: STACK_MODE_VALUES[action.layoutMode], name: action.layoutMode },
+    stackMode: toEnumValue(action.layoutMode, STACK_MODE_VALUES),
     stackSpacing: action.itemSpacing,
     stackVerticalPadding: action.paddingTop,
     stackHorizontalPadding: action.paddingLeft,
     stackPaddingRight: action.paddingRight,
     stackPaddingBottom: action.paddingBottom,
-    stackCounterAlignItems: {
-      value: STACK_ALIGN_VALUES[action.counterAxisAlign],
-      name: action.counterAxisAlign,
-    },
+    stackCounterAlignItems: toEnumValue(action.counterAxisAlign, STACK_ALIGN_VALUES),
   });
   state.summary.layoutsApplied += 1;
 }

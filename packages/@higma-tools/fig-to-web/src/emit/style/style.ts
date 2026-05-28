@@ -39,7 +39,7 @@ import type {
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { buildCssFontFamily } from "@higma-document-models/fig/font";
-import { formatPx, round3 } from "../../lib/css-format/numeric";
+import { formatPx, round2, round3 } from "../../lib/css-format/numeric";
 import type { TokenIndex } from "../../tokens";
 import { effectsToBoxShadow } from "../../tokens";
 import type { ImageResolver } from "./paint";
@@ -243,13 +243,22 @@ function lineHeightCss(value: FigValueWithUnits | undefined): string | undefined
   if (!value) {
     return undefined;
   }
+  // Use the same rounding the token table uses (see
+  // tokens/typography.ts :: lineHeightToCss) so the descriptor key
+  // generated here for `typographyIdFor(...)` lookup matches the key
+  // the token table built when ingesting. Float-precision noise like
+  // 1.7999999523162842 reaches us from the .fig and would otherwise
+  // hash to a different bucket than the token's "1.8" entry,
+  // forcing the emitter to fall back to inline `fontSize/lineHeight`
+  // and skip the typography token entirely (which silently drops
+  // `fontWeight` because the inline path doesn't restate it).
   switch (value.units.name) {
     case "PIXELS":
-      return `${value.value}px`;
+      return `${round2(value.value)}px`;
     case "PERCENT":
-      return `${value.value}%`;
+      return `${round2(value.value)}%`;
     case "RAW":
-      return `${value.value}`;
+      return `${round2(value.value)}`;
     case "AUTO":
       return "normal";
   }
@@ -265,11 +274,11 @@ function letterSpacingCss(value: FigValueWithUnits | undefined): string | undefi
   }
   switch (value.units.name) {
     case "PIXELS":
-      return `${value.value}px`;
+      return `${round2(value.value)}px`;
     case "PERCENT":
-      return `${value.value / 100}em`;
+      return `${round2(value.value / 100)}em`;
     case "RAW":
-      return `${value.value}em`;
+      return `${round2(value.value)}em`;
     case "AUTO":
       return undefined;
   }
@@ -613,6 +622,15 @@ export type StyleInputs = {
    * rendered at runtime.
    */
   readonly textBoundGuids?: ReadonlySet<string>;
+  /**
+   * Descendants any call site in the document overrides with an
+   * IMAGE fill paint. When emitting the SYMBOL body of one of
+   * those guids, swap the literal `background` colour for an
+   * image-aware `background-image: var(--bg-<guid>, <default>)` so
+   * the wrapper CSS variable can carry per-call-site photo URLs.
+   * Empty when no IMAGE overrides exist anywhere.
+   */
+  readonly imageFillOverrideTargets?: ReadonlySet<string>;
 };
 
 /**
@@ -910,7 +928,30 @@ function applyVisuals(node: FigNode, inputs: StyleInputs, style: Record<string, 
   if (!isText && !isVectorShaped && !isInstance) {
     const fills = node.fillPaints ?? node.backgroundPaints;
     const bg = paintsToBackgroundStyle(fills, inputs.index, inputs.imageResolver, nodeSizeOf(node));
-    Object.assign(style, bg);
+    // SYMBOL-body emit for an image-fill-overrideable descendant:
+    // expose the background via a CSS variable so the INSTANCE
+    // wrapper can override it per-call-site. The original literal
+    // bg becomes the fallback. We swap `background` (solid colour)
+    // for `backgroundImage: var(--bg-<guid>, <colour>)` with
+    // `background-size: cover` so the supplied photo URL fills
+    // the box. When no override exists at runtime, the colour
+    // fallback paints — visually identical to before.
+    const overrideTargets = inputs.imageFillOverrideTargets;
+    if (overrideTargets && overrideTargets.has(guidToString(node.guid))) {
+      const colourFallback = bg.background as string | undefined;
+      const cssVar = `--bg-${node.guid.sessionID}-${node.guid.localID}`;
+      const styleAsAny: Record<string, string> = style as Record<string, string>;
+      if (colourFallback !== undefined) {
+        styleAsAny.background = `var(${cssVar}, ${colourFallback})`;
+      } else {
+        styleAsAny.background = `var(${cssVar})`;
+      }
+      styleAsAny.backgroundSize = "cover";
+      styleAsAny.backgroundPosition = "center";
+      styleAsAny.backgroundRepeat = "no-repeat";
+    } else {
+      Object.assign(style, bg);
+    }
   }
 
   if (!isVectorShaped && !isInstance) {
@@ -1021,8 +1062,50 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
   // mirroring that keeps row-based components like Library "Your
   // videos" / "Your movies" on one line even though the SYMBOL's
   // outer container was sized for the shorter "History" default.
-  if (style.width === "auto" && isTextPropBound(node, inputs)) {
+  //
+  // Skip when the authored characters carry explicit `\n` line
+  // breaks — that text is fundamentally multi-line and `nowrap`
+  // would collapse it onto one row. Auto-width multi-line text
+  // belongs on the `pre-line` rule below.
+  if (
+    style.width === "auto"
+    && isTextPropBound(node, inputs)
+    && !textCharactersContainExplicitLineBreak(node)
+  ) {
     style.whiteSpace = "nowrap";
+  }
+
+  // Multi-line text whose authored characters contain explicit line
+  // breaks needs `pre-line` so the `\n` characters render as line
+  // breaks. Without it the browser collapses `\n` to a space and
+  // wraps purely on container width — which produces *different*
+  // line breaks from Figma even though our container has the
+  // authored width, because Figma also honoured the explicit `\n`
+  // when measuring lines. `pre-line` (vs. `pre-wrap`) collapses
+  // surrounding whitespace, matching Figma's display of trailing
+  // spaces on a line as not contributing to the next line's indent.
+  //
+  // Must run before the single-baseline `nowrap` rule below — for
+  // auto-width TEXT (WIDTH_AND_HEIGHT) Figma flattens 3 lines into
+  // `derivedTextData.baselines.length === 1` because each authored
+  // `\n` becomes its own visual line; without the explicit-`\n`
+  // gate that single-baseline check would collapse the address
+  // (〒/北海道/TEL) onto one row.
+  if (!style.whiteSpace && textCharactersContainExplicitLineBreak(node)) {
+    style.whiteSpace = "pre-line";
+  }
+
+  // Fixed-width Figma TEXT (`textAutoResize: HEIGHT`) wraps within
+  // the authored box at any character — Figma's line-breaker doesn't
+  // need ASCII whitespace or CJK-Unified-Ideograph boundaries to
+  // split a run. Browsers default to `word-break: normal`, which
+  // refuses to break inside "Other Symbol" runs (e.g. U+25CB ○).
+  // Without `word-break: break-all` the placeholder strings made of
+  // ○ stay on one line and overflow the container, hiding the
+  // authored multi-line layout. Limit this to the HEIGHT auto-resize
+  // mode so we don't override word-breaking for normal prose.
+  if (!style.wordBreak && node.textAutoResize?.name === "HEIGHT") {
+    style.wordBreak = "break-all";
   }
 
   // Single-line text (baselines.length === 1) was rendered by Figma
@@ -1184,6 +1267,20 @@ function readDerivedBaselineLineHeight(node: FigNode): number | undefined {
 function isSingleBaselineText(node: FigNode): boolean {
   const dtd = (node as { readonly derivedTextData?: { readonly baselines?: ReadonlyArray<unknown> } }).derivedTextData;
   return (dtd?.baselines?.length ?? 0) === 1;
+}
+
+function textCharactersContainExplicitLineBreak(node: FigNode): boolean {
+  // Figma loads visible characters into `textData.characters` for
+  // nodes parsed from a real .fig binary; nodes built via the
+  // high-level `addNode` builder populate the legacy top-level
+  // `characters` field. Consult both, matching the resolution order
+  // in `emit/render/jsx :: textCharacters`.
+  const fromTextData = (node as { readonly textData?: { readonly characters?: unknown } }).textData?.characters;
+  if (typeof fromTextData === "string" && fromTextData.includes("\n")) {
+    return true;
+  }
+  const fromLegacy = (node as { readonly characters?: unknown }).characters;
+  return typeof fromLegacy === "string" && fromLegacy.includes("\n");
 }
 
 function clampLineHeightToBounds(node: FigNode, derivedLh: number): number {
