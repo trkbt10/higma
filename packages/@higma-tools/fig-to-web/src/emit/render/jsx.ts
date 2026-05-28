@@ -1250,6 +1250,16 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   const variant = variantValueForInstance(context.source, context.registry, node);
   const overrideVars = resolveInstancePaintOverrides(resolved.effectiveSymbol, resolved.resolvedChildren, context);
   const mergedWrapStyle = mergeInstanceWrapperStyle(wrapStyle, overrideVars);
+  // Clip the wrapper when the INSTANCE is authored at a non-uniform
+  // size relative to its SYMBOL — Figma cannot scale that case
+  // (different x/y ratios), so its export crops the content to the
+  // INSTANCE bounds (the about-desktop Management block is a 680×16
+  // crop of a much taller block-features SYMBOL; without clipping
+  // the inner heading and body text overflow and paint over the
+  // sibling layers below). Uniform scaling stays on the visible
+  // path so `wrapForScale`'s transformed wrapper still paints
+  // outside its own bounds.
+  applyInstanceClipIfTruncated(node, context, mergedWrapStyle);
   const wrapStyleProp = styleAsProp(mergedWrapStyle, wrapTransform);
 
   const componentProps: JsxProp[] = [];
@@ -1713,6 +1723,53 @@ function wrapForScale(
 }
 
 const SCALE_RATIO_TOLERANCE = 0.05;
+
+/**
+ * Add `overflow: hidden` to an INSTANCE wrapper when its authored
+ * box is smaller than the SYMBOL's natural box on at least one axis
+ * and the two axes don't share a single scale ratio. The non-
+ * uniform case can't be folded into `wrapForScale`'s CSS scale, so
+ * the SYMBOL renders at full size and overflows the wrapper. Figma
+ * crops in that case; mirroring with `overflow: hidden` keeps
+ * sibling layout from being painted over.
+ */
+function applyInstanceClipIfTruncated(
+  instance: FigNode,
+  context: EmitContext,
+  wrapStyle: Record<string, string>,
+): void {
+  if (wrapStyle.overflow) {
+    return;
+  }
+  const symbolSize = naturalSymbolSize(instance, context);
+  if (!symbolSize || !instance.size) {
+    return;
+  }
+  if (symbolSize.x <= 0 || symbolSize.y <= 0) {
+    return;
+  }
+  const sx = instance.size.x / symbolSize.x;
+  const sy = instance.size.y / symbolSize.y;
+  // Only clip when the INSTANCE is *dramatically* smaller than the
+  // SYMBOL on at least one axis — the about-desktop Management
+  // sliver is 680×16 against a much taller block-features SYMBOL,
+  // so one ratio is below 0.5 while the other stays near 1.
+  // Card-style components with tiny dimension drift (a 200×300
+  // INSTANCE of a 200×300 SYMBOL whose autolayout adjusts the
+  // wrapper by 1-2 px) must not trigger this branch — their content
+  // is supposed to overflow the wrapper because the wrapper is
+  // smaller only by rounding.
+  const minSquishRatio = Math.min(sx, sy);
+  if (minSquishRatio >= 0.5) {
+    return;
+  }
+  if (Math.abs(sx - sy) <= SCALE_RATIO_TOLERANCE) {
+    // Uniform scale: wrapForScale will paint at SYMBOL size; let the
+    // scaled inner overflow the wrapper deliberately.
+    return;
+  }
+  wrapStyle.overflow = "hidden";
+}
 
 function naturalSymbolSize(
   instance: FigNode,
