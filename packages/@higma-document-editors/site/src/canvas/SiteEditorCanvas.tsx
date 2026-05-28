@@ -215,7 +215,9 @@ export function SiteEditorCanvas() {
     viewportWidth: extents.width,
     viewportHeight: extents.height,
     kiwiDocumentMutation: INITIAL_SITE_FIG_KIWI_DOCUMENT_MUTATION,
-    pruneToViewport: true,
+    // Site editor renders only currently-visible layers — Figma's
+    // hidden-layer convention is preserved.
+    showHiddenNodes: false,
   });
   const renderRevision = useMemo(
     () => unitMoves.map((move) => `${move.unitId}:${move.deltaX}:${move.deltaY}`).join("|"),
