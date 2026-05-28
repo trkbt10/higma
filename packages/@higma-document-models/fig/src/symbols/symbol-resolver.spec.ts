@@ -392,7 +392,12 @@ describe("cloneSymbolChildren", () => {
     expect(firstEntry.name).toBe("DeepOverride");
   });
 
-  it("rejects derivedSymbolData whose local target is neither present nor materialized", () => {
+  it("drops orphaned derivedSymbolData whose local target is neither present nor materialized", () => {
+    // Exported .fig files routinely carry derivedSymbolData entries
+    // whose leading GUID addresses a slot from an external component
+    // library; Figma silently ignores those (see `isDerivedDataApplicable`
+    // in `constraints.ts`). The resolver must tolerate the same shape,
+    // not throw — throwing would reject normal exports as broken.
     const symbolNode = createTestNode({
       type: "SYMBOL",
       name: "TestSymbol",
@@ -405,7 +410,7 @@ describe("cloneSymbolChildren", () => {
       ],
     });
 
-    expect(() => cloneSymbolChildren(symbolNode, {
+    const result = cloneSymbolChildren(symbolNode, {
       childrenOf: childrenOfFixtureNode,
       derivedSymbolData: [
         {
@@ -413,7 +418,13 @@ describe("cloneSymbolChildren", () => {
           size: { x: 20, y: 10 },
         },
       ],
-    })).toThrow(/override target 1:99 is not present/);
+    });
+
+    expect(result).toHaveLength(1);
+    const slot = result[0] as Record<string, unknown>;
+    // The existing slot is untouched: the orphan entry doesn't address
+    // it, so neither size nor any other field is overwritten.
+    expect(slot.size).toBeUndefined();
   });
 
   it("keeps unresolved stale derivedSymbolData from replacing a materialized SYMBOL subtree", () => {

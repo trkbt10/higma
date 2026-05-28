@@ -1305,7 +1305,20 @@ function handleMissingOverrideTarget(
   if (isMaterializedOverrideTargetAllowed(nodes, override, targetPolicy)) {
     return;
   }
+  if (isOrphanedDerivedSymbolEntry(targetPolicy)) {
+    // Exported .fig files routinely carry derivedSymbolData entries
+    // whose leading GUID addresses a slot from an external component
+    // library — Figma keeps these as a cache and silently drops them
+    // when the slot isn't present in the file's own SYMBOL. Matches
+    // `isDerivedDataApplicable` in `constraints.ts`, which documents
+    // the same "orphaned entries" tolerance for layout resolution.
+    return;
+  }
   throw new Error(`SymbolResolver: override target ${guidToString(targetGuid)} is not present in the cloned SYMBOL descendants`);
+}
+
+function isOrphanedDerivedSymbolEntry(targetPolicy: OverrideTargetPolicy): boolean {
+  return targetPolicy.kind === "require-target-or-materialized-parent";
 }
 
 function isMaterializedOverrideTargetAllowed(
