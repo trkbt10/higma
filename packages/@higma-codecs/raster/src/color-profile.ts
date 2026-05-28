@@ -225,6 +225,53 @@ export function identifySupportedIccProfile(profile: IccProfile | undefined): Fi
   if (!description) {
     throw new Error("ICC profile is missing the required profileDescriptionTag (desc)");
   }
+  const matched = matchIccDescriptionToManagedProfile(description);
+  if (matched) {
+    return matched;
+  }
+  throw new Error(`Unsupported ICC profile for image color management: ${description}`);
+}
+
+/**
+ * Classification of an embedded image ICC profile by what it claims
+ * about the pixel encoding.
+ *
+ * - `managed`: the profile names a colour space the codec knows how
+ *   to convert from (sRGB / Display P3). The renderer can run exact
+ *   pixel conversion against `profile`.
+ * - `untagged`: the profile is a valid ICC payload but its
+ *   description names a device (a specific monitor, camera, printer,
+ *   …) rather than a pixel encoding. Real-world examples include
+ *   `LG HDR WFHD OPT` (macOS attaching the connected display's
+ *   profile to a JPEG when the user pastes a photo into Figma) and
+ *   per-camera profiles authored by Photoshop. Browsers and Figma's
+ *   own renderer strip these silently and treat the pixels as
+ *   sRGB-equivalent — no colour conversion is performed, because
+ *   the embedded profile does not describe the encoding the pixels
+ *   were saved in.
+ *
+ * Malformed ICC payloads still throw (structural parse failures
+ * propagate from `extractIccDescription`); `untagged` only applies
+ * to valid profiles whose description doesn't match a recognised
+ * pixel colour space.
+ */
+export type ImagePixelColorSpace =
+  | { readonly kind: "managed"; readonly profile: FigmaExportColorProfile }
+  | { readonly kind: "untagged" };
+
+export function recognizeImagePixelColorSpace(profile: IccProfile): ImagePixelColorSpace {
+  const description = extractIccDescription(profile.data);
+  if (!description) {
+    throw new Error("ICC profile is missing the required profileDescriptionTag (desc)");
+  }
+  const matched = matchIccDescriptionToManagedProfile(description);
+  if (matched) {
+    return { kind: "managed", profile: matched };
+  }
+  return { kind: "untagged" };
+}
+
+function matchIccDescriptionToManagedProfile(description: string): FigmaExportColorProfile | undefined {
   const normalized = description.trim().replace(/\s+/gu, " ").toLowerCase();
   if (SUPPORTED_DISPLAY_P3_ICC_DESCRIPTIONS.has(normalized)) {
     return "DISPLAY_P3_V4";
@@ -232,5 +279,5 @@ export function identifySupportedIccProfile(profile: IccProfile | undefined): Fi
   if (SUPPORTED_SRGB_ICC_DESCRIPTIONS.has(normalized)) {
     return "SRGB";
   }
-  throw new Error(`Unsupported ICC profile for image color management: ${description}`);
+  return undefined;
 }

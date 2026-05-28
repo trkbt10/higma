@@ -18,7 +18,7 @@
  * (`desc` for v2, `mluc` for v4). This spec drives both branches.
  */
 
-import { identifySupportedIccProfile } from "./color-profile";
+import { identifySupportedIccProfile, recognizeImagePixelColorSpace } from "./color-profile";
 
 function writeUint32BE(target: Uint8Array, offset: number, value: number): void {
   target[offset] = (value >>> 24) & 0xff;
@@ -168,5 +168,78 @@ describe("identifySupportedIccProfile — ICC v2/v4 profileDescriptionTag", () =
     expect(() => identifySupportedIccProfile({ name: "x", data: buffer })).toThrow(
       "ICC profile is missing the required profileDescriptionTag (desc)",
     );
+  });
+});
+
+describe("recognizeImagePixelColorSpace — pixel-space vs device-tag classification", () => {
+  // Pixels carry colour information only when the embedded profile
+  // describes a known pixel encoding (sRGB, Display P3). Real-world
+  // JPEGs frequently embed a display-calibration profile (e.g. macOS
+  // attaching the connected monitor's profile such as "LG HDR WFHD
+  // OPT") that says nothing about how the pixels are encoded — every
+  // browser treats those images as if no profile were attached. This
+  // function expresses that distinction so the fill pipeline can skip
+  // colour conversion for untagged images instead of failing fast on
+  // a profile it has no business converting from.
+
+  it("classifies an sRGB profile as managed pixel space", () => {
+    const profile = {
+      name: "ICC Profile",
+      data: buildIccProfileWithDescTag({
+        tagBytes: buildV4MlucTagBytes("sRGB"),
+        version: { major: 4, minor: 3 },
+      }),
+    };
+    expect(recognizeImagePixelColorSpace(profile)).toEqual({ kind: "managed", profile: "SRGB" });
+  });
+
+  it("classifies a Display P3 profile as managed pixel space", () => {
+    const profile = {
+      name: "ICC Profile",
+      data: buildIccProfileWithDescTag({
+        tagBytes: buildV4MlucTagBytes("Display P3"),
+        version: { major: 4, minor: 0 },
+      }),
+    };
+    expect(recognizeImagePixelColorSpace(profile)).toEqual({
+      kind: "managed",
+      profile: "DISPLAY_P3_V4",
+    });
+  });
+
+  it("classifies an LG monitor display profile as untagged pixel space", () => {
+    // The profile description identifies an LG display, not a pixel
+    // encoding — Mac Photos attached the connected display's profile
+    // to the JPEG metadata when the user dragged the photo into
+    // Figma. The pixel bytes themselves are sRGB-encoded; the profile
+    // is descriptive metadata that browsers strip silently.
+    const profile = {
+      name: "ICC Profile",
+      data: buildIccProfileWithDescTag({
+        tagBytes: buildV4MlucTagBytes("LG HDR WFHD OPT"),
+        version: { major: 4, minor: 0 },
+      }),
+    };
+    expect(recognizeImagePixelColorSpace(profile)).toEqual({ kind: "untagged" });
+  });
+
+  it("classifies an arbitrary device-tag description as untagged pixel space", () => {
+    const profile = {
+      name: "ICC Profile",
+      data: buildIccProfileWithDescTag({
+        tagBytes: buildV4MlucTagBytes("Canon EOS Camera"),
+        version: { major: 4, minor: 0 },
+      }),
+    };
+    expect(recognizeImagePixelColorSpace(profile)).toEqual({ kind: "untagged" });
+  });
+
+  it("propagates structural parse errors when the profile header is malformed", () => {
+    // Malformed profiles must still throw — `untagged` is for valid
+    // ICC payloads whose description simply doesn't name a pixel
+    // colour space. A broken file is a separate failure mode and
+    // must not be silently swallowed.
+    const tooShort = new Uint8Array(10);
+    expect(() => recognizeImagePixelColorSpace({ name: "x", data: tooShort })).toThrow();
   });
 });

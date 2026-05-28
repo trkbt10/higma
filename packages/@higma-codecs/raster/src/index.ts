@@ -22,6 +22,8 @@ export { resampleImage, type ResampleImageOptions } from "./image-resample";
 export {
   convertRgbColorProfile,
   identifySupportedIccProfile,
+  recognizeImagePixelColorSpace,
+  type ImagePixelColorSpace,
 } from "./color-profile";
 
 export { extractJpegIccProfile } from "./jpeg-icc";
