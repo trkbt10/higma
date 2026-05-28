@@ -365,10 +365,25 @@ function describeFace(
   fontPath: string,
   faceIndex: number,
 ): FontFileInfo | null {
-  const family = fontNameValue(font.names, "fontFamily")
+  // For variable fonts (`fvar` present) the OpenType-spec correct
+  // family is the typographic / preferred family (name ID 16). A
+  // single variable file represents an entire weight/width axis,
+  // so `name.fontFamily` (ID 1) typically encodes the file's
+  // default named instance (e.g. `"Noto Sans JP Thin"` on the
+  // `wght`-axis Noto Sans JP variable) — indexing by that string
+  // would only match queries that already include the weight word,
+  // which Figma's font queries never do. `preferredFamily`
+  // strips the per-instance suffix and reads as `"Noto Sans JP"`,
+  // matching the resolver's `(family, weight, style)` shape. We
+  // keep `fontFamily` as the static-font path so legacy single-
+  // weight files (Inter Regular.ttf, etc.) still index unchanged.
+  const isVariable = getVariableAxes(font) !== undefined;
+  const family = (isVariable ? fontNameValue(font.names, "preferredFamily") : undefined)
+    ?? fontNameValue(font.names, "fontFamily")
     ?? fontNameValue(font.names, "preferredFamily")
     ?? deriveFamilyFromFilename(fontPath);
-  const subfamily = fontNameValue(font.names, "fontSubfamily")
+  const subfamily = (isVariable ? fontNameValue(font.names, "preferredSubfamily") : undefined)
+    ?? fontNameValue(font.names, "fontSubfamily")
     ?? deriveSubfamilyFromFilename(fontPath)
     ?? "";
   const postscriptName = fontNameValue(font.names, "postScriptName");
