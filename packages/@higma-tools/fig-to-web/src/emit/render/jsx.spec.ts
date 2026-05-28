@@ -112,6 +112,123 @@ const TRANSLATION_ONLY: FigMatrix = {
   m12: 60,
 };
 
+/**
+ * Synthesise a 100×100 root frame carrying a single image paint whose
+ * `paint.transform` is supplied by the caller. Lets each spec test the
+ * emission path (background-image vs structural <img>) deterministically.
+ */
+function buildImagePaintScene(paintTransform: FigMatrix): {
+  readonly source: FigDocumentContext;
+  readonly target: FrameTarget;
+} {
+  const imageHash = [0xab, 0xcd, 0xef];
+  const root: FigNode = {
+    guid: { sessionID: 2, localID: 1 },
+    phase: enumName("CREATED"),
+    type: enumName("ROUNDED_RECTANGLE"),
+    name: "image-host",
+    size: { x: 100, y: 100 },
+    fillPaints: [
+      {
+        type: enumName("IMAGE"),
+        opacity: 1,
+        visible: true,
+        blendMode: enumName("NORMAL"),
+        imageScaleMode: enumName("STRETCH"),
+        image: { hash: imageHash },
+        transform: paintTransform,
+      },
+    ],
+  } as unknown as FigNode;
+  const source = createFigDocumentContextFromNodeChanges({
+    nodeChanges: [root],
+    blobs: [],
+    images: new Map([
+      [
+        imageHash.map((b) => b.toString(16).padStart(2, "0")).join(""),
+        { hash: imageHash, data: new Uint8Array([0]), mimeType: "image/png" },
+      ],
+    ]),
+    metadata: null,
+  });
+  return {
+    source,
+    target: {
+      node: root,
+      componentName: "ImageHost",
+      filePath: "pages/page/image-host.tsx",
+      slug: "image-host",
+      canvasSlug: "page",
+    },
+  };
+}
+
+function makeImagePaintOpts(): EmitOpts {
+  return {
+    ...makeOpts(),
+    imageResolver: () => "./assets/test.png",
+  };
+}
+
+describe("emitPageFile — image paint with rotated transform falls back to structural <img>", () => {
+  it("emits a child <img> with a CSS matrix transform instead of a degraded background", () => {
+    // +30° rotation paint transform — CSS background-image cannot
+    // represent the rotation, so the emitter must produce
+    // `<div ...><img transform=matrix(...)/></div>` and the container
+    // must carry `position: relative` and `overflow: hidden` so the
+    // absolutely-positioned image is clipped to the node's bounds.
+    const cos30 = Math.cos(Math.PI / 6);
+    const sin30 = Math.sin(Math.PI / 6);
+    const { source, target } = buildImagePaintScene({
+      m00: cos30,
+      m01: -sin30,
+      m02: 0,
+      m10: sin30,
+      m11: cos30,
+      m12: 0,
+    });
+    const files = emitPageFile(source, EMPTY_REGISTRY, EMPTY_TOKEN_INDEX, target, makeImagePaintOpts());
+    const page = files.find((f) => f.path === target.filePath);
+    if (!page) {
+      throw new Error(`expected emit to produce ${target.filePath}`);
+    }
+    // A structural <img> must appear with the resolved asset URL.
+    expect(page.contents).toContain('<img src="./assets/test.png"');
+    // ... carrying the CSS matrix transform with rotation components.
+    expect(page.contents).toMatch(/transform:\s*"matrix\(/);
+    // The container has been promoted to a positioning context and
+    // clips the image, so the absolutely-positioned <img> stays inside
+    // the Figma node's bounds (including any borderRadius).
+    expect(page.contents).toMatch(/position:\s*"relative"/);
+    expect(page.contents).toMatch(/overflow:\s*"hidden"/);
+    // And the image paint is NOT also dragged through the background
+    // layer stack — that would double-paint and visibly bleed under
+    // the rotated foreground.
+    expect(page.contents).not.toContain("backgroundImage:");
+  });
+
+  it("leaves an axis-aligned crop on the CSS background path (no structural <img>)", () => {
+    // Axis-aligned m01 = m10 = 0 means CSS `background-size` /
+    // `background-position` can faithfully express the crop, so the
+    // emitter must NOT promote to a structural <img>.
+    const { source, target } = buildImagePaintScene({
+      m00: 0.8,
+      m01: 0,
+      m02: 0.1,
+      m10: 0,
+      m11: 0.6,
+      m12: 0.05,
+    });
+    const files = emitPageFile(source, EMPTY_REGISTRY, EMPTY_TOKEN_INDEX, target, makeImagePaintOpts());
+    const page = files.find((f) => f.path === target.filePath);
+    if (!page) {
+      throw new Error(`expected emit to produce ${target.filePath}`);
+    }
+    expect(page.contents).toContain('backgroundImage: "url(\\"./assets/test.png\\")"');
+    expect(page.contents).not.toMatch(/<img\s+src="\.\/assets\/test\.png"/);
+  });
+});
+
 describe("emitPageFile — transform emission for autolayout children", () => {
   it("preserves a rotated child's matrix when the parent is autolayout (flex)", () => {
     const { source, target } = buildScene(ROTATION_90);

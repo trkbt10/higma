@@ -474,7 +474,17 @@ function near(a: number, b: number): boolean {
   return Math.abs(a - b) <= RECT_PATH_EPSILON;
 }
 
-function clampSvgRectCornerRadius(width: number, height: number, radius: number): number {
+/**
+ * Clamp an SVG `<rect rx>` value to a radius the browser will render as
+ * a perfect (axis-equal) corner. Browsers clamp `rx` and `ry`
+ * independently — `rx > width/2` is capped to `width/2`, `ry > height/2`
+ * to `height/2` — so emitting just `rx="40"` on a `54px`-tall rect with
+ * `ry` defaulting to `rx` would silently yield an *elliptical* corner
+ * (`rx=40, ry=27`). Pre-clamping to `min(width/2, height/2)` ensures
+ * the emitted attribute renders as the circular pill the fill side
+ * already draws.
+ */
+export function clampSvgRectCornerRadius(width: number, height: number, radius: number): number {
   return Math.min(radius, width / 2, height / 2);
 }
 

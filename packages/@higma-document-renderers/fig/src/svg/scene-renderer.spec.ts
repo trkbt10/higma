@@ -1945,4 +1945,68 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).not.toMatch(/<clipPath[^>]*>[^<]*<path[^>]*d="/);
   });
 
+  it("clamps the INSIDE stroke <rect rx> to half the shorter side so a pill rect renders as a circular pill", () => {
+    // Regression: a 435x54 rounded rect with source cornerRadius=40 has
+    // rx > height/2. The stroke emitter used to forward the source
+    // value verbatim — `<rect rx="39.5">` — and SVG's per-axis clamp
+    // (`ry = rx` when only `rx` is set, then `ry` independently clamped
+    // to height/2) silently produced an elliptical corner (rx=39.5,
+    // ry=26.5). The fill side already clamps via
+    // `clampSvgRectCornerRadius`, so the stroke must match.
+    const pillRect: RectNode = {
+      type: "rect",
+      id: createNodeId("pill-rect-stroke"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 435,
+      height: 54,
+      cornerRadius: 40,
+      fills: [{ type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1 }],
+      stroke: {
+        width: 1,
+        linecap: "butt",
+        linejoin: "miter",
+        color: { r: 0.286, g: 0.733, b: 0.741, a: 1 },
+        opacity: 1,
+        align: "INSIDE",
+      },
+    };
+    const sceneGraph: SceneGraph = {
+      width: 600,
+      height: 200,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [pillRect],
+      },
+      version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    // Stroke rect uses the inset dimensions (434x53) so the clamp target
+    // is half-height = 26.5. The emitted `rx` must not exceed that.
+    const strokeRectMatch = svg.match(/<rect [^>]*stroke="[^"]+"[^>]*\/>/);
+    if (strokeRectMatch === null) {
+      throw new Error(`expected an INSIDE-stroke rect in:\n${svg}`);
+    }
+    const strokeRect = strokeRectMatch[0];
+    const rxMatch = strokeRect.match(/\brx="([^"]+)"/);
+    if (rxMatch === null) {
+      throw new Error(`expected the stroke rect to carry an rx attribute: ${strokeRect}`);
+    }
+    const rxValue = Number(rxMatch[1]);
+    expect(Number.isFinite(rxValue)).toBe(true);
+    expect(rxValue).toBeLessThanOrEqual(26.5);
+    // And source cornerRadius - half-stroke = 39.5 must NOT leak through.
+    expect(rxValue).not.toBe(39.5);
+  });
+
 });

@@ -33,7 +33,8 @@ import type { TokenIndex } from "../../tokens";
 import type { EmitRegistry } from "../types";
 import type { ParentContext, ParentLayout, RootMode, StyleInputs } from "../style/style";
 import { nodeToStyle, parentLayoutOf } from "../style/style";
-import type { ImageResolver } from "../style/paint";
+import type { ImageElementEmission, ImageResolver } from "../style/paint";
+import { imageElementForNode } from "../style/paint";
 import { absorbBackgroundDecoration } from "../style/decoration";
 import { isPlainRule } from "../style/rule";
 import type { PropBindings } from "../plan/prop-bindings";
@@ -379,13 +380,23 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   const inferred = inferLayout(node, baseChildren);
 
   const computedStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, inferred, parentContextOf(options));
-  const style = mergeAbsorbedStyle(computedStyle, absorbed.style);
+  const baseStyle = mergeAbsorbedStyle(computedStyle, absorbed.style);
   const transform = transformForNode(node, rootMode);
+
+  // Structural image emission: when `paint.transform` carries
+  // rotation / skew that `background-image` cannot express, the paint
+  // resolver returns an `<img>` element instead and we host it as the
+  // first child of this container. `overflow: hidden` clips the image
+  // to the node's box (including its `borderRadius`); `position` is
+  // forced to a non-`static` value so the absolutely-positioned `<img>`
+  // is laid out against this container, not an ancestor.
+  const imageBody = imageElementChildFor(node, context);
+  const style = withStructuralImageContainer(baseStyle, imageBody);
 
   const orderedChildren = childrenForEmit(node, baseChildren, inferred);
   const props: JsxProp[] = [...dataAttrs];
   props.push(styleAsProp(style, transform));
-  if (orderedChildren.length === 0) {
+  if (orderedChildren.length === 0 && imageBody === undefined) {
     return emitLeafJsx(node, context, style, props);
   }
   const childParentLayout = effectiveChildParentLayout(node, inferred);
@@ -396,7 +407,67 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
     parentAlignItems: childContext.alignItems,
     parentContent: childContext.content,
   }));
-  return el("div", { props, children, layout: "block" });
+  const finalChildren = imageBody === undefined ? children : [imageBody, ...children];
+  return el("div", { props, children: finalChildren, layout: "block" });
+}
+
+/**
+ * Build the structural `<img>` JsxNode for a node's image paint when
+ * the paint's `transform` carries rotation / skew (and therefore can
+ * not be expressed via `background-image` + `background-size` /
+ * `-position`). Returns `undefined` for nodes whose image paints all
+ * map cleanly to CSS background shorthand.
+ */
+function imageElementChildFor(node: FigNode, context: EmitContext): JsxNode | undefined {
+  const paints = node.fillPaints ?? node.backgroundPaints;
+  const emission = imageElementForNode(paints, context.imageResolver, nodeSizeForStructuralImage(node));
+  if (emission === undefined) {
+    return undefined;
+  }
+  return renderImageElementEmission(emission);
+}
+
+function renderImageElementEmission(emission: ImageElementEmission): JsxNode {
+  return el("img", {
+    props: [
+      strProp("src", emission.src),
+      strProp("alt", emission.altText),
+      styleProp(emission.imgStyle),
+    ],
+  });
+}
+
+function nodeSizeForStructuralImage(node: FigNode): { readonly width: number; readonly height: number } | undefined {
+  const size = node.size;
+  if (size === undefined) {
+    return undefined;
+  }
+  if (size.x <= 0 || size.y <= 0) {
+    return undefined;
+  }
+  return { width: size.x, height: size.y };
+}
+
+/**
+ * Adjust the container style for a structural image emission. The
+ * `<img>` is positioned absolute at `(0, 0)` and then transformed; the
+ * container therefore needs a positioning context and explicit clipping
+ * so the image stays inside the node's bounds (including its
+ * `borderRadius`). Unchanged when no structural emission applies.
+ */
+function withStructuralImageContainer(
+  style: Record<string, string>,
+  imageBody: JsxNode | undefined,
+): Record<string, string> {
+  if (imageBody === undefined) {
+    return style;
+  }
+  const next: Record<string, string> = { ...style };
+  if (next.position !== "absolute" && next.position !== "fixed" && next.position !== "sticky") {
+    next.position = "relative";
+  }
+  next.overflow = "hidden";
+  return next;
 }
 
 /**

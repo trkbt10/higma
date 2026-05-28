@@ -25,13 +25,26 @@ import type {
 } from "@higma-document-models/fig/types";
 import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
 import { canonicaliseImageScaleMode, type ScaleMode } from "@higma-document-models/fig/constants";
-import { getGradientDirection, getGradientStops, getScaleMode } from "@higma-document-renderers/fig/paint";
+import { getGradientDirection, getGradientStops, getImageTransform, getScaleMode } from "@higma-document-renderers/fig/paint";
 import type { TokenIndex } from "../../tokens";
 import { figColorToCss } from "../../lib/css-format/color";
-import { clamp01, round3 } from "../../lib/css-format/numeric";
+import { clamp01, formatPx, round3 } from "../../lib/css-format/numeric";
 import { solidPaintToCss } from "../../lib/css-format/paint";
 
 export type ImageResolver = (paint: FigImagePaint) => string | undefined;
+
+/**
+ * Pixel dimensions of the node whose paint stack is being emitted.
+ *
+ * The CROP-from-paint-transform path needs to convert the paint's
+ * normalised (object-bounding-box) transform into `background-size` /
+ * `background-position` in CSS pixels. Callers without a usable size
+ * pass `undefined`; the emitter falls back to the scale-mode-only
+ * shorthand and the cropped sub-rectangle is silently lost (matches the
+ * legacy behaviour). Threading a real size through eliminates that
+ * silent loss for the common axis-aligned crop.
+ */
+export type NodeSize = { readonly width: number; readonly height: number };
 
 /** Result of converting a paint stack. `imagesUsed` lets the orchestrator's
  *  asset writer skip unused images even when the resolver was called. */
@@ -119,17 +132,41 @@ function imageScaleMode(paint: FigImagePaint): ScaleMode {
   return canonicaliseImageScaleMode(getScaleMode(paint));
 }
 
-function imageBackgroundLayer(paint: FigImagePaint, resolver: ImageResolver): {
+function imageBackgroundLayer(
+  paint: FigImagePaint,
+  resolver: ImageResolver,
+  nodeSize: NodeSize | undefined,
+): {
   readonly image: string;
   readonly size?: string;
   readonly repeat?: string;
   readonly position?: string;
 } | undefined {
+  // CSS background cannot rotate or skew an image — only translate and
+  // independently scale on the two axes. When the paint's transform
+  // carries rotation or skew, the JSX emitter routes the paint through
+  // `imageElementForNode` to a structural `<div><img/></div>` instead.
+  // Returning `undefined` here keeps the background layer stack from
+  // double-painting the same paint via a degraded shorthand.
+  if (paintRequiresStructuralEmission(paint)) {
+    return undefined;
+  }
   const image = imagePaintCss(paint, resolver);
   if (!image) {
     return undefined;
   }
   const mode = imageScaleMode(paint);
+  // Figma's binary `imageScaleMode` enum only declares STRETCH / FIT /
+  // FILL / TILE — there is no `CROP` value. The editor's Crop tool
+  // serialises as STRETCH plus a non-identity `paint.transform` that
+  // positions the image inside the fill rect. The renderer SoT
+  // (`@higma-document-renderers/fig/scene-graph/convert/fill.ts:
+  // resolveImageScaleMode`) honours that contract; mirror it here so
+  // the React side does not silently treat the paint as a full stretch.
+  const cropLayer = imageCropLayer(paint, image, mode, nodeSize);
+  if (cropLayer !== undefined) {
+    return cropLayer;
+  }
   switch (mode) {
     case "FILL":
       return { image, size: "cover", repeat: "no-repeat", position: "center" };
@@ -140,6 +177,227 @@ function imageBackgroundLayer(paint: FigImagePaint, resolver: ImageResolver): {
     case "STRETCH":
       return { image, size: "100% 100%", repeat: "no-repeat" };
   }
+}
+
+/**
+ * Translate a STRETCH paint whose `paint.transform` encodes a Figma
+ * Crop into pixel-precise `background-size` and `background-position`.
+ *
+ * SoT: `@higma-document-renderers/fig/scene-graph/render/image-pattern-finalize.ts`
+ * builds the SVG pattern's `<use>` transform as
+ * `inv(paint.transform) × diag(1/imgW, 1/imgH)`. That means
+ * `paint.transform` maps *unit fill coordinates* `(x, y) ∈ [0,1]` of
+ * the node back to *unit image coordinates* `(u, v) ∈ [0,1]` of the
+ * source: for an axis-aligned matrix (`m01 = m10 = 0`),
+ *
+ *   u = m00 · x + m02
+ *   v = m11 · y + m12
+ *
+ * CSS `background-image` instead asks for the image's displayed
+ * rectangle inside the element: sampling a div pixel `x` reads image
+ * pixel `(x − Px) / Sw · imgW`. Equating the two yields the inverse
+ * mapping
+ *
+ *   Sw = W / m00,             Sh = H / m11,
+ *   Px = − m02 · W / m00,     Py = − m12 · H / m11.
+ *
+ * Returns `undefined` when the paint is not a Crop-on-STRETCH at all
+ * (mode mismatch, identity transform, or no transform). Rotation /
+ * skew are intercepted upstream in `imageBackgroundLayer` and never
+ * reach this function — a sanity throw catches a stale caller.
+ */
+function imageCropLayer(
+  paint: FigImagePaint,
+  image: string,
+  mode: ScaleMode,
+  nodeSize: NodeSize | undefined,
+): { readonly image: string; readonly size: string; readonly repeat: string; readonly position: string } | undefined {
+  if (mode !== "STRETCH") {
+    return undefined;
+  }
+  const transform = getImageTransform(paint);
+  if (transform === undefined) {
+    return undefined;
+  }
+  const m00 = transform.m00 ?? 1;
+  const m01 = transform.m01 ?? 0;
+  const m02 = transform.m02 ?? 0;
+  const m10 = transform.m10 ?? 0;
+  const m11 = transform.m11 ?? 1;
+  const m12 = transform.m12 ?? 0;
+  if (m00 === 1 && m01 === 0 && m02 === 0 && m10 === 0 && m11 === 1 && m12 === 0) {
+    return undefined;
+  }
+  if (m01 !== 0 || m10 !== 0) {
+    throw new Error(
+      `imageCropLayer reached for a paint with rotation/skew (m01=${m01}, m10=${m10}); ` +
+        "the JSX emitter must route such paints through imageElementForNode instead.",
+    );
+  }
+  // Crop requires the node's pixel dimensions to convert the unit-space
+  // matrix into `background-size` / `background-position`. A sizeless
+  // node with an image-cropped paint is a contradiction in the source
+  // file rather than something to paper over; throw so the missing
+  // dimension surfaces at emit time.
+  if (nodeSize === undefined || nodeSize.width <= 0 || nodeSize.height <= 0) {
+    throw new Error(
+      "imageCropLayer requires a positive node size to translate Figma Crop's normalised paint transform into CSS pixels",
+    );
+  }
+  if (m00 === 0 || m11 === 0) {
+    throw new Error(
+      `imageCropLayer requires an invertible axis-aligned transform; got m00=${m00}, m11=${m11}`,
+    );
+  }
+  const sizeWidth = nodeSize.width / m00;
+  const sizeHeight = nodeSize.height / m11;
+  const positionX = -m02 * nodeSize.width / m00;
+  const positionY = -m12 * nodeSize.height / m11;
+  return {
+    image,
+    size: `${formatPx(sizeWidth)} ${formatPx(sizeHeight)}`,
+    repeat: "no-repeat",
+    position: `${formatPx(positionX)} ${formatPx(positionY)}`,
+  };
+}
+
+/**
+ * True when the image paint's `transform` carries rotation or skew that
+ * CSS `background-image` cannot express. The JSX emitter routes such
+ * paints through `imageElementForNode` to a structural `<div><img/></div>`
+ * instead of polluting the background layer stack with a degraded
+ * shorthand.
+ */
+function paintRequiresStructuralEmission(paint: FigImagePaint): boolean {
+  const transform = getImageTransform(paint);
+  if (transform === undefined) {
+    return false;
+  }
+  const m01 = transform.m01 ?? 0;
+  const m10 = transform.m10 ?? 0;
+  return m01 !== 0 || m10 !== 0;
+}
+
+/**
+ * Structural emission for a node's image paint when CSS `background-*`
+ * cannot represent its `paint.transform` (rotation / skew). The caller
+ * (the JSX emitter) wraps the node in a `<div style={overflow:hidden,
+ * position:relative}>` and inserts the returned `<img/>` as the first
+ * child so subsequent Figma children paint over the image.
+ *
+ * Math: the `<img>` is sized to the container's `W × H` and positioned
+ * absolutely at `(0, 0)`. CSS `transform: matrix(M_a, M_b, M_c, M_d,
+ * M_tx, M_ty)` then maps the img's local rectangle into the container.
+ * `paint.transform` `T` maps unit fill coordinates back to unit image
+ * coordinates (cf. `inv(paint.transform)` baked into the SVG renderer's
+ * pattern `<use>`); when the `<img>` is rendered at the container's
+ * pixel dimensions, the parent→local mapping `N` is
+ *
+ *   N = diag(W, H) · T · diag(1/W, 1/H)
+ *
+ * and the CSS transform we need is `M = inv(N)`. Working that out
+ * yields
+ *
+ *   M_a = m11/det,                       M_b = -m10·H/(W·det),
+ *   M_c = -m01·W/(H·det),                M_d = m00/det,
+ *   M_tx = W · (-m11·m02 + m01·m12)/det, M_ty = H · (m10·m02 - m00·m12)/det
+ *
+ * with `det = m00·m11 - m01·m10`. The formula handles axis-aligned and
+ * rotated/skewed matrices uniformly; the JSX emitter dispatches the
+ * axis-aligned case through `background-image` for compactness.
+ *
+ * Notably this does NOT depend on the source image's natural pixel
+ * dimensions — sizing the `<img>` to `W × H` makes the matrix express
+ * the entire mapping. This sidesteps Figma's undocumented
+ * `originalImageWidth/Height` paint fields.
+ */
+export type ImageElementEmission = {
+  readonly src: string;
+  readonly imgStyle: Record<string, string>;
+  readonly altText: string;
+};
+
+export function imageElementForNode(
+  paints: readonly FigPaint[] | undefined,
+  resolver: ImageResolver,
+  nodeSize: NodeSize | undefined,
+): ImageElementEmission | undefined {
+  if (!paints || paints.length === 0) {
+    return undefined;
+  }
+  if (nodeSize === undefined || nodeSize.width <= 0 || nodeSize.height <= 0) {
+    return undefined;
+  }
+  for (const paint of paints) {
+    if (!isVisible(paint)) {
+      continue;
+    }
+    const image = asImagePaint(paint);
+    if (image === undefined) {
+      continue;
+    }
+    if (!paintRequiresStructuralEmission(image)) {
+      continue;
+    }
+    return buildImageElementEmission(image, resolver, nodeSize);
+  }
+  return undefined;
+}
+
+function buildImageElementEmission(
+  image: FigImagePaint,
+  resolver: ImageResolver,
+  nodeSize: NodeSize,
+): ImageElementEmission {
+  const src = resolver(image);
+  if (!src) {
+    throw new Error(
+      `imageElementForNode: ImageResolver returned no URL for an image paint requiring structural emission`,
+    );
+  }
+  const transform = getImageTransform(image);
+  if (transform === undefined) {
+    throw new Error("imageElementForNode: structural emission requested for a paint without a transform");
+  }
+  const m00 = transform.m00 ?? 1;
+  const m01 = transform.m01 ?? 0;
+  const m02 = transform.m02 ?? 0;
+  const m10 = transform.m10 ?? 0;
+  const m11 = transform.m11 ?? 1;
+  const m12 = transform.m12 ?? 0;
+  const det = m00 * m11 - m01 * m10;
+  if (Math.abs(det) < 1e-12) {
+    throw new Error(
+      `imageElementForNode: paint.transform is not invertible (det≈0): m00=${m00}, m01=${m01}, m10=${m10}, m11=${m11}`,
+    );
+  }
+  const w = nodeSize.width;
+  const h = nodeSize.height;
+  // M = inv(diag(W, H) · T · diag(1/W, 1/H)). See the docstring above
+  // for the derivation; this is also the same matrix the SVG pattern
+  // `<use>` carries, just expressed in container-pixel coordinates so
+  // it can ride on CSS `transform`.
+  const a  =  m11 / det;
+  const b  = -m10 * h / (w * det);
+  const c  = -m01 * w / (h * det);
+  const d  =  m00 / det;
+  const tx = w * (-m11 * m02 + m01 * m12) / det;
+  const ty = h * ( m10 * m02 - m00 * m12) / det;
+  return {
+    src,
+    // No `altText` accessor on the typed `FigImagePaint`; alt is left
+    // empty rather than reaching for an undocumented runtime field.
+    altText: "",
+    imgStyle: {
+      position: "absolute",
+      left: "0px",
+      top: "0px",
+      width: `${formatPx(w)}`,
+      height: `${formatPx(h)}`,
+      transform: `matrix(${a}, ${b}, ${c}, ${d}, ${tx}, ${ty})`,
+      transformOrigin: "0 0",
+    },
+  };
 }
 
 function isVisible(paint: FigPaint): boolean {
@@ -172,7 +430,12 @@ function gradientLayer(paint: FigGradientPaint): BackgroundLayer | undefined {
   return { image: css };
 }
 
-function paintToLayer(paint: FigPaint, index: TokenIndex, resolver: ImageResolver): BackgroundLayer | undefined {
+function paintToLayer(
+  paint: FigPaint,
+  index: TokenIndex,
+  resolver: ImageResolver,
+  nodeSize: NodeSize | undefined,
+): BackgroundLayer | undefined {
   if (!isVisible(paint)) {
     return undefined;
   }
@@ -187,7 +450,7 @@ function paintToLayer(paint: FigPaint, index: TokenIndex, resolver: ImageResolve
   }
   const image = asImagePaint(paint);
   if (image !== undefined) {
-    return imageBackgroundLayer(image, resolver);
+    return imageBackgroundLayer(image, resolver, nodeSize);
   }
   throw new Error(`paintToLayer: unsupported paint type "${getPaintType(paint)}"`);
 }
@@ -217,6 +480,7 @@ export function paintsToBackgroundStyle(
   paints: readonly FigPaint[] | undefined,
   index: TokenIndex,
   resolver: ImageResolver,
+  nodeSize: NodeSize | undefined = undefined,
 ): Record<string, string> {
   if (!paints || paints.length === 0) {
     return {};
@@ -237,7 +501,7 @@ export function paintsToBackgroundStyle(
   // array order is bottom-first, so the FIRST solid we encounter is
   // the one that paints under everything else.
   const bottomSolid = pickBottomSolid(visible, index);
-  const layers = collectImageGradientLayers(visible, index, resolver);
+  const layers = collectImageGradientLayers(visible, index, resolver, nodeSize);
 
   const out: Record<string, string> = {};
   if (bottomSolid !== undefined) {
@@ -278,13 +542,14 @@ function collectImageGradientLayers(
   visible: readonly FigPaint[],
   index: TokenIndex,
   resolver: ImageResolver,
+  nodeSize: NodeSize | undefined,
 ): readonly BackgroundLayer[] {
   const layers: BackgroundLayer[] = [];
   for (const paint of [...visible].reverse()) {
     if (asSolidPaint(paint) !== undefined) {
       continue;
     }
-    const layer = paintToLayer(paint, index, resolver);
+    const layer = paintToLayer(paint, index, resolver, nodeSize);
     if (layer) {
       layers.push(layer);
     }
@@ -303,6 +568,7 @@ export function paintsForText(
   paints: readonly FigPaint[] | undefined,
   index: TokenIndex,
   resolver: ImageResolver,
+  nodeSize: NodeSize | undefined = undefined,
 ): { readonly color?: string; readonly fancy?: Record<string, string> } {
   if (!paints || paints.length === 0) {
     return {};
@@ -316,7 +582,7 @@ export function paintsForText(
     const css = solidPaintToCss(singleSolid, index);
     return css ? { color: css } : {};
   }
-  const fancy = paintsToBackgroundStyle(paints, index, resolver);
+  const fancy = paintsToBackgroundStyle(paints, index, resolver, nodeSize);
   if (Object.keys(fancy).length === 0) {
     return {};
   }

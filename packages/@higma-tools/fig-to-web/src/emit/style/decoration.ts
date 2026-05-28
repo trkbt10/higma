@@ -174,7 +174,9 @@ function perCornerRadiusCss(node: FigNode): string | undefined {
 function decorationStyle(decoration: FigNode, inputs: StyleInputs): Record<string, string> {
   const style: Record<string, string> = {};
   const fills = decoration.fillPaints ?? decoration.backgroundPaints;
-  Object.assign(style, paintsToBackgroundStyle(fills, inputs.index, inputs.imageResolver));
+  const size = decoration.size;
+  const nodeSize = size && size.x > 0 && size.y > 0 ? { width: size.x, height: size.y } : undefined;
+  Object.assign(style, paintsToBackgroundStyle(fills, inputs.index, inputs.imageResolver, nodeSize));
 
   const radius = decorationRadius(decoration);
   if (radius !== undefined) {

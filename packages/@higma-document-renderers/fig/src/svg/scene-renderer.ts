@@ -22,6 +22,7 @@
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "../scene-graph";
 import {
+  clampSvgRectCornerRadius,
   resolveSvgMaskElementAttrs,
   resolveSvgMaskPresentation,
   resolveSvgStrokeMaskElementAttrs,
@@ -1184,7 +1185,15 @@ function tryFormatAlignedRectStroke(
     return path({ d, ...fillAttrs, ...sAttrs });
   }
   const rxValue = uniform ?? (typeof adjustedCornerRadius === "number" ? adjustedCornerRadius : 0);
-  const rxAttr = rxValue > 0 ? { rx: rxValue } : {};
+  // SVG clamps `rx` and `ry` independently to half-extent on each axis,
+  // and `ry` defaults to `rx` when only `rx` is emitted. For pill-shaped
+  // strokes (e.g. a 435x54 rect with cornerRadius=40) that produces an
+  // elliptical corner — `rx=39.5, ry=26.5` — instead of the circular
+  // half-height arc the fill side already draws. Pre-clamp here so the
+  // stroke's emitted `rx` matches what the fill resolves to via
+  // `resolveRectShapePrimitive`.
+  const clampedRx = clampSvgRectCornerRadius(w, h, rxValue);
+  const rxAttr = clampedRx > 0 ? { rx: clampedRx } : {};
   return rect({ x, y, width: w, height: h, ...rxAttr, ...fillAttrs, ...sAttrs });
 }
 

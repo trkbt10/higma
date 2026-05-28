@@ -119,6 +119,7 @@ export {
 } from "./svg-mask-attrs";
 
 export {
+  clampSvgRectCornerRadius,
   resolveLayeredRectShapePrimitive,
   resolvePathBackedRectShapePrimitive,
   resolvePathContourRectPrimitive,

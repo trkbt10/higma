@@ -1235,6 +1235,63 @@ describe("resolveRenderTree — stroke layers", () => {
     });
   });
 
+  it("falls through to a path stroke shape when a non-rect contour carries vertex cornerRadius", () => {
+    // Regression: REGULAR_POLYGON (count=4) on disk decodes to a diamond
+    // (four bounding-box midpoints joined by rounded corners) and the
+    // FigNode also carries a `cornerRadius` value describing the
+    // *vertex* rounding. The PathNode therefore arrives at the resolver
+    // with `cornerRadius + width + height` set even though the contour
+    // is not an axis-aligned rounded rect. Previously the resolver
+    // unconditionally forwarded a `kind:"rect"` strokeShape, which made
+    // the SVG renderer emit `<rect rx=…>` for the stroke — silently
+    // flattening the diamond into an upright square. Verify that a
+    // path-shaped contour stays path-shaped on the stroke side so the
+    // visible stroke continues to follow the actual diamond outline.
+    const diamondContour = {
+      commands: [
+        { type: "M" as const, x: 37.2574, y: 4.2426 },
+        { type: "C" as const, x1: 39.6005, y1: 1.8995, x2: 43.3995, y2: 1.8995, x: 45.7426, y: 4.2426 },
+        { type: "L" as const, x: 78.7574, y: 37.2574 },
+        { type: "C" as const, x1: 81.1005, y1: 39.6005, x2: 81.1005, y2: 43.3995, x: 78.7574, y: 45.7426 },
+        { type: "L" as const, x: 45.7426, y: 78.7574 },
+        { type: "C" as const, x1: 43.3995, y1: 81.1005, x2: 39.6005, y2: 81.1005, x: 37.2574, y: 78.7574 },
+        { type: "L" as const, x: 4.2426, y: 45.7426 },
+        { type: "C" as const, x1: 1.8995, y1: 43.3995, x2: 1.8995, y2: 39.6005, x: 4.2426, y: 37.2574 },
+        { type: "L" as const, x: 37.2574, y: 4.2426 },
+      ],
+      windingRule: "nonzero" as const,
+    };
+    const polygonPath: PathNode = {
+      type: "path",
+      id: createNodeId("diamond-polygon-stroke"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 83,
+      height: 83,
+      cornerRadius: 6,
+      contours: [diamondContour],
+      fills: [],
+      stroke: {
+        ...BASIC_STROKE,
+        align: "INSIDE",
+      },
+    };
+    const sg = makeSceneGraph([polygonPath]);
+    const tree = resolveRenderTree(sg);
+
+    const node = tree.children[0] as RenderPathNode;
+    const strokeRendering = node.strokeRendering;
+    if (strokeRendering === undefined) {
+      throw new Error("expected diamond polygon to produce stroke rendering");
+    }
+    // The strokeShape must NOT be `kind:"rect"` — the rect-stroke
+    // emitter would otherwise draw an axis-aligned `<rect rx=5>` over
+    // the diamond's actual outline.
+    expect(strokeRendering.shape.kind).toBe("path");
+  });
+
   it("resolves multi-paint stroke as layers", () => {
     const rect: RectNode = {
       type: "rect",

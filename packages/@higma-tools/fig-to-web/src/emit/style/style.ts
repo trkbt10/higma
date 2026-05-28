@@ -867,6 +867,25 @@ function maxStrokeForExpansion(node: FigNode): number {
   return 0;
 }
 
+/**
+ * Pixel size of the node, in the form `paintsToBackgroundStyle`
+ * expects so it can resolve a Figma Crop's normalised `paint.transform`
+ * into pixel-accurate `background-size` / `background-position`.
+ * Returns `undefined` for sizeless / degenerate nodes (LINE collapsed
+ * on one axis, frame whose size has not been authored). Callers that
+ * pass `undefined` accept the legacy STRETCH-100% behaviour.
+ */
+function nodeSizeOf(node: FigNode): { readonly width: number; readonly height: number } | undefined {
+  const size = node.size;
+  if (size === undefined) {
+    return undefined;
+  }
+  if (size.x <= 0 || size.y <= 0) {
+    return undefined;
+  }
+  return { width: size.x, height: size.y };
+}
+
 function applyVisuals(node: FigNode, inputs: StyleInputs, style: Record<string, string>): void {
   // Vector-shaped nodes paint via SVG `<path>` elements, which carry
   // their own `fill` / `stroke` attributes; emitting CSS `background`
@@ -890,7 +909,7 @@ function applyVisuals(node: FigNode, inputs: StyleInputs, style: Record<string, 
 
   if (!isText && !isVectorShaped && !isInstance) {
     const fills = node.fillPaints ?? node.backgroundPaints;
-    const bg = paintsToBackgroundStyle(fills, inputs.index, inputs.imageResolver);
+    const bg = paintsToBackgroundStyle(fills, inputs.index, inputs.imageResolver, nodeSizeOf(node));
     Object.assign(style, bg);
   }
 
@@ -930,7 +949,7 @@ function strokeColorCss(node: FigNode, inputs: StyleInputs): string | undefined 
   if (!stroke) {
     return undefined;
   }
-  const result = paintsToBackgroundStyle([stroke], inputs.index, inputs.imageResolver);
+  const result = paintsToBackgroundStyle([stroke], inputs.index, inputs.imageResolver, nodeSizeOf(node));
   // Only SOLID strokes survive as a clean colour — gradient strokes
   // are too rare to handle with a non-trivial CSS workaround. When
   // result has `background` but not `backgroundImage`, the stroke is
@@ -1091,7 +1110,7 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
     style.letterSpacing = letterSpacing;
   }
 
-  const text = paintsForText(node.fillPaints, inputs.index, inputs.imageResolver);
+  const text = paintsForText(node.fillPaints, inputs.index, inputs.imageResolver, nodeSizeOf(node));
   if (text.color) {
     style.color = text.color;
   } else if (text.fancy) {

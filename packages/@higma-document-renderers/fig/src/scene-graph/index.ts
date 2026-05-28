@@ -68,6 +68,7 @@ export {
   resolveSvgMaskElementAttrs,
   resolveSvgMaskPresentation,
   resolveSvgStrokeMaskElementAttrs,
+  clampSvgRectCornerRadius,
   resolveLayeredRectShapePrimitive,
   resolvePathBackedRectShapePrimitive,
   resolvePathContourRectPrimitive,

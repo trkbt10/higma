@@ -37,6 +37,7 @@ import {
   renderExportSettingsCacheKey,
   buildEffectStack,
   resolveFrameSurfaceFilterEffects,
+  resolvePathContourRectPrimitive,
   type IdGenerator,
   type ResolvedFill,
   type ResolvedFilter,
@@ -1827,7 +1828,22 @@ function resolvePathStrokeShape(
   if (centerlinePaths !== undefined) {
     return { kind: "path", paths: centerlinePaths };
   }
-  if (node.cornerRadius !== undefined && typeof node.width === "number" && typeof node.height === "number") {
+  if (
+    node.cornerRadius !== undefined &&
+    typeof node.width === "number" &&
+    typeof node.height === "number" &&
+    pathsAreAxisAlignedRoundedRect(paths, node.width, node.height)
+  ) {
+    // `cornerRadius` lands on PathNode for any FigNode whose Kiwi schema
+    // carries the field — RECTANGLE, ROUNDED_RECTANGLE, but also
+    // REGULAR_POLYGON / STAR / VECTOR whose source `cornerRadius` controls
+    // *vertex* rounding rather than a bounding-rect inset. Only the
+    // rounded-rectangle case is safe to forward as a `kind: "rect"`
+    // strokeShape — the rect-stroke emitter draws an axis-aligned
+    // `<rect rx>`, which would silently flatten a diamond polygon into
+    // an upright square. Gate on the actual contour shape so polygons /
+    // stars / vectors with vertex `cornerRadius` fall through to a
+    // path-shaped stroke that follows their real geometry.
     return {
       kind: "rect",
       width: node.width,
@@ -1837,6 +1853,21 @@ function resolvePathStrokeShape(
     };
   }
   return { kind: "path", paths };
+}
+
+function pathsAreAxisAlignedRoundedRect(
+  paths: readonly RenderPathContour[],
+  width: number,
+  height: number,
+): boolean {
+  if (paths.length !== 1) {
+    return false;
+  }
+  const contour = paths[0];
+  if (contour === undefined) {
+    return false;
+  }
+  return resolvePathContourRectPrimitive(contour, { width, height }) !== undefined;
 }
 
 function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: ResolvedFigmaRenderExportSettings): RenderTextNode {
