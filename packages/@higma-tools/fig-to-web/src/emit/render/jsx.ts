@@ -26,7 +26,8 @@
  *     as any other node so they integrate cleanly with auto-layout
  *     parents.
  */
-import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import type { FigColor, FigGuid, FigMatrix, FigNode, FigVariableID, FigSolidPaint } from "@higma-document-models/fig/types";
+import { asImagePaint, asSolidPaint } from "@higma-document-models/fig/color";
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { figmaFontToQuery, isItalic } from "@higma-document-models/fig/font";
 import type { TokenIndex } from "../../tokens";
@@ -150,6 +151,7 @@ function styleInputsOf(context: EmitContext): StyleInputs {
     childrenOf: (node) => childrenOfEmitNode(node, context),
     textBoundGuids: textBoundGuidsOf(context.propBindings),
     imageFillOverrideTargets: context.registry.imageFillOverrideTargets,
+    fontSizeOverrideTargets: context.registry.fontSizeOverrideTargets,
   };
 }
 
@@ -254,7 +256,7 @@ function isRendered(node: FigNode): boolean {
 }
 
 function isFigmaMaskNode(node: FigNode): boolean {
-  return (node as { readonly mask?: boolean }).mask === true;
+  return node.mask === true;
 }
 
 /**
@@ -526,8 +528,7 @@ function addBias(
 }
 
 function nodeHasOwnFillGeometry(node: FigNode): boolean {
-  const fg = (node as { readonly fillGeometry?: readonly unknown[] }).fillGeometry;
-  return Array.isArray(fg) && fg.length > 0;
+  return Array.isArray(node.fillGeometry) && node.fillGeometry.length > 0;
 }
 
 function emitVectorLeafJsx(
@@ -1342,8 +1343,55 @@ function resolveInstancePaintOverrides(
     }
     collectChangedPaints(baseNode, resolvedNode, context, out);
     collectImageFillOverride(resolvedNode, context, out);
+    collectFontSizeOverride(baseNode, resolvedNode, context, out);
   });
   return out;
+}
+
+/**
+ * When the resolved TEXT's `fontSize` differs from the SYMBOL
+ * author's value, emit `--fs-<guid>: <Npx>` on the wrapper. The
+ * SYMBOL body's TEXT emit reads through `var(--fs-<guid>, default)`
+ * (registered via `fontSizeOverrideTargets` in the document scan)
+ * and picks up the per-instance value. Without this, a breakpoint-
+ * scaled INSTANCE renders at the SYMBOL author's size instead of
+ * the size Figma actually rasterised at.
+ */
+function collectFontSizeOverride(
+  baseNode: FigNode,
+  resolvedNode: FigNode,
+  context: EmitContext,
+  out: Record<string, string>,
+): void {
+  if (resolvedNode.type?.name !== "TEXT") {
+    return;
+  }
+  const guidStr = guidToString(resolvedNode.guid);
+  if (!context.registry.fontSizeOverrideTargets.has(guidStr)) {
+    return;
+  }
+  const resolvedSize = resolvedNode.fontSize;
+  if (typeof resolvedSize !== "number") {
+    return;
+  }
+  const baseSize = baseNode.fontSize;
+  if (typeof baseSize === "number" && Math.abs(baseSize - resolvedSize) < 0.5) {
+    return;
+  }
+  out[`--fs-${resolvedNode.guid.sessionID}-${resolvedNode.guid.localID}`] = `${resolvedSize}px`;
+  // Line-height scales alongside font-size whenever the SYMBOL stored
+  // it as a multiplier / PERCENT (the validation file's BlockFeatures
+  // heading goes 32 px / 48 px → 42 px / 63 px at the breakpoint-
+  // scaled INSTANCE). Read the resolved baseline stride directly
+  // because Figma's exporter pre-bakes the multiplier into
+  // `derivedTextData.baselines[*].lineHeight`.
+  const resolvedLh = resolvedNode.derivedTextData?.baselines?.[0]?.lineHeight;
+  if (typeof resolvedLh === "number" && resolvedLh > 0) {
+    const baseLh = baseNode.derivedTextData?.baselines?.[0]?.lineHeight;
+    if (typeof baseLh !== "number" || Math.abs(baseLh - resolvedLh) >= 0.5) {
+      out[`--lh-${resolvedNode.guid.sessionID}-${resolvedNode.guid.localID}`] = `${resolvedLh}px`;
+    }
+  }
 }
 
 /**
@@ -1367,15 +1415,28 @@ function collectImageFillOverride(
   if (!paints || paints.length === 0) {
     return;
   }
-  const imagePaint = paints.find((p) => p.visible !== false && (p as { readonly type?: { readonly name?: string } }).type?.name === "IMAGE");
-  if (!imagePaint) {
+  const imagePaint = findFirstImagePaint(paints);
+  if (imagePaint === undefined) {
     return;
   }
-  const src = context.imageResolver(imagePaint as never);
+  const src = context.imageResolver(imagePaint);
   if (!src) {
     return;
   }
   out[`--bg-${resolvedNode.guid.sessionID}-${resolvedNode.guid.localID}`] = `url("${src}")`;
+}
+
+function findFirstImagePaint(paints: readonly FigPaint[]): ReturnType<typeof asImagePaint> {
+  for (const paint of paints) {
+    if (paint.visible === false) {
+      continue;
+    }
+    const image = asImagePaint(paint);
+    if (image !== undefined) {
+      return image;
+    }
+  }
+  return undefined;
 }
 
 function symbolDescendantsByGuid(
@@ -1568,52 +1629,54 @@ function collectPaintsOverride(
   out[`--${originalToken}`] = newColor;
 }
 
-function readKiwiEnumName(value: unknown): string | undefined {
-  return kiwiEnumName(value, "Kiwi enum field");
-}
-
 function solidPaintToCss(paint: FigPaint, context?: EmitContext): string | undefined {
-  const rawType = (paint as { readonly type?: unknown }).type;
-  const typeName = readKiwiEnumName(rawType);
-  if (typeName !== "SOLID") {
+  const solid = asSolidPaint(paint);
+  if (solid === undefined) {
     return undefined;
   }
-  // When the paint references a Figma VARIABLE (`paint.colorVar` →
-  // `alias.guid`), the paint's literal RGB is only a fallback — the
-  // effective colour is the variable's resolved value. Tokenisation
-  // built its color → id index from raw RGB, so look up via the
-  // variable's resolved value to find the matching token (e.g.
-  // `var(--color-base-text)`), and only fall through to the literal
-  // RGB when the variable can't be resolved or its colour isn't
-  // tokenised. Without this hop, a symbolOverride that swaps the
-  // POLYGON's fill to a variable-aliased dark colour renders as the
-  // override's raw stub RGB (often opaque white) and the design's
-  // theme variable is lost at the override boundary.
-  const aliasGuid = paint.colorVar?.value?.alias?.guid;
-  if (context !== undefined && aliasGuid) {
+  // When the paint references a Figma VARIABLE the paint's literal
+  // RGB is only a fallback — the effective colour is the variable's
+  // resolved value. Tokenisation built its color→id index from raw
+  // RGB, so look up via the variable's resolved value to find the
+  // matching token (e.g. `var(--color-base-text)`), and only fall
+  // through to the literal RGB when the variable can't be resolved
+  // or its colour isn't tokenised. Without this hop a symbolOverride
+  // that swaps the POLYGON's fill to a variable-aliased dark colour
+  // renders as the override's raw stub RGB (often opaque white) and
+  // the design's theme variable is lost at the override boundary.
+  const aliasGuid = variableAliasGuid(solid.colorVar?.value?.alias);
+  if (context !== undefined && aliasGuid !== undefined) {
     const resolved = resolveColorVariable(aliasGuid, context);
     if (resolved !== undefined) {
-      const aliasToken = context.index.colorIdForPaints([variableColorAsPaint(resolved)]);
-      if (aliasToken) {
-        return `var(--${aliasToken})`;
-      }
-      const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
-      const r = Math.round(resolved.r * 255);
-      const g = Math.round(resolved.g * 255);
-      const b = Math.round(resolved.b * 255);
-      const a = (resolved.a ?? 1) * opacity;
-      if (a >= 0.999) {
-        return `rgb(${r}, ${g}, ${b})`;
-      }
-      return `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`;
+      return formatVariableColor(solid, resolved, context);
     }
   }
-  const solid = paint as { readonly color?: { readonly r: number; readonly g: number; readonly b: number; readonly a?: number }; readonly opacity?: number };
-  const c = solid.color;
-  if (!c) {
-    return undefined;
+  return formatSolidColor(solid);
+}
+
+function formatVariableColor(
+  paint: FigSolidPaint,
+  resolved: FigColor,
+  context: EmitContext,
+): string {
+  const aliasToken = context.index.colorIdForPaints([variableColorAsPaint(resolved)]);
+  if (aliasToken) {
+    return `var(--${aliasToken})`;
   }
-  const opacity = typeof solid.opacity === "number" ? solid.opacity : 1;
+  const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const r = Math.round(resolved.r * 255);
+  const g = Math.round(resolved.g * 255);
+  const b = Math.round(resolved.b * 255);
+  const a = (resolved.a ?? 1) * opacity;
+  if (a >= 0.999) {
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  return `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`;
+}
+
+function formatSolidColor(paint: FigSolidPaint): string {
+  const c = paint.color;
+  const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
   const r = Math.round(c.r * 255);
   const g = Math.round(c.g * 255);
   const b = Math.round(c.b * 255);
@@ -1634,7 +1697,7 @@ function resolveColorVariable(
   aliasGuid: FigGuid,
   context: EmitContext,
   visited: Set<string> = new Set(),
-): { readonly r: number; readonly g: number; readonly b: number; readonly a: number } | undefined {
+): FigColor | undefined {
   const key = guidToString(aliasGuid);
   if (visited.has(key)) {
     return undefined;
@@ -1644,7 +1707,7 @@ function resolveColorVariable(
   if (!variable) {
     return undefined;
   }
-  const entries = (variable as { readonly variableDataValues?: { readonly entries?: ReadonlyArray<{ readonly variableData?: { readonly value?: { readonly colorValue?: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }; readonly alias?: { readonly guid?: FigGuid } } } }> } }).variableDataValues?.entries;
+  const entries = variable.variableDataValues?.entries;
   if (!entries || entries.length === 0) {
     return undefined;
   }
@@ -1658,20 +1721,37 @@ function resolveColorVariable(
   if (value.colorValue) {
     return { r: value.colorValue.r, g: value.colorValue.g, b: value.colorValue.b, a: value.colorValue.a ?? 1 };
   }
-  if (value.alias?.guid) {
-    return resolveColorVariable(value.alias.guid, context, visited);
+  const aliasTarget = variableAliasGuid(value.alias);
+  if (aliasTarget !== undefined) {
+    return resolveColorVariable(aliasTarget, context, visited);
   }
   return undefined;
 }
 
-function variableColorAsPaint(color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }): FigPaint {
+/**
+ * Figma `FigVariableID` is `FigGuid | { assetRef: { key, version? } }`.
+ * Only the in-document `FigGuid` form is resolvable via
+ * `nodesByGuid`; the `assetRef` form points at an external library
+ * variable whose colour value we don't have locally.
+ */
+function variableAliasGuid(alias: FigVariableID | undefined): FigGuid | undefined {
+  if (alias === undefined) {
+    return undefined;
+  }
+  if ("sessionID" in alias && "localID" in alias) {
+    return alias;
+  }
+  return undefined;
+}
+
+function variableColorAsPaint(color: FigColor): FigSolidPaint {
   return {
     type: { value: 0, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
     blendMode: { value: 1, name: "NORMAL" },
-  } as unknown as FigPaint;
+  };
 }
 
 const SCALE_EPSILON = 1e-3;

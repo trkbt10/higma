@@ -1152,6 +1152,13 @@ export type FigKiwiSymbolOverridePayload = {
   readonly name?: string;
   readonly visible?: boolean;
   readonly opacity?: number;
+  // Text-side override fields. Figma stores the authored field
+  // directly on the override entry when a per-call-site
+  // breakpoint adjusts a SYMBOL TEXT — e.g. the validation file's
+  // top-desktop catchcopy slot overrides `fontSize: 42` against a
+  // SYMBOL TEXT that the author wrote at 32.
+  readonly fontSize?: number;
+  readonly fontName?: FigFontName;
   readonly blendMode?: KiwiEnumValue<BlendMode>;
   readonly mask?: boolean;
   readonly maskIsOutline?: boolean;

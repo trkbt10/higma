@@ -631,6 +631,13 @@ export type StyleInputs = {
    * Empty when no IMAGE overrides exist anywhere.
    */
   readonly imageFillOverrideTargets?: ReadonlySet<string>;
+  /**
+   * TEXT guids whose `fontSize` some call site overrides. When the
+   * SYMBOL body emits one of these TEXTs, route `font-size` through
+   * `var(--fs-<guid>, <default>)` so a wrapper-level CSS variable
+   * can switch the rendered size per INSTANCE.
+   */
+  readonly fontSizeOverrideTargets?: ReadonlySet<string>;
 };
 
 /**
@@ -1059,8 +1066,40 @@ function renderBorder(width: number, colour: string, dashed: boolean): string {
  * render visibly larger than the reference. Falls back to the
  * authored size when `derivedTextData` is unavailable.
  */
+/**
+ * CSS variable name (`--fs-<session>-<local>`) for this TEXT's
+ * call-site font-size override slot, or `undefined` when no INSTANCE
+ * call site in the document overrides this TEXT's `fontSize`.
+ */
+function fontSizeCssVariableFor(node: FigNode, inputs: StyleInputs): string | undefined {
+  if (node.type?.name !== "TEXT") {
+    return undefined;
+  }
+  const targets = inputs.fontSizeOverrideTargets;
+  if (!targets || targets.size === 0) {
+    return undefined;
+  }
+  const key = `${node.guid.sessionID}:${node.guid.localID}`;
+  if (!targets.has(key)) {
+    return undefined;
+  }
+  return `--fs-${node.guid.sessionID}-${node.guid.localID}`;
+}
+
+/**
+ * Paired with `fontSizeCssVariableFor`: when a call site overrides
+ * font-size, line-height typically scales with it (Figma stores
+ * `lineHeight` as a multiplier or PERCENT, so a 32 px / 48 px pair
+ * becomes 42 px / 63 px at a breakpoint-scaled INSTANCE). Routing
+ * line-height through `--lh-<guid>` lets the wrapper supply the
+ * matching value.
+ */
+function lineHeightCssVariableFor(node: FigNode): string {
+  return `--lh-${node.guid.sessionID}-${node.guid.localID}`;
+}
+
 function renderedFontSize(node: FigNode): number | undefined {
-  const glyphs = (node as { readonly derivedTextData?: { readonly glyphs?: ReadonlyArray<{ readonly fontSize?: number }> } }).derivedTextData?.glyphs;
+  const glyphs = node.derivedTextData?.glyphs;
   if (glyphs && glyphs.length > 0) {
     const first = glyphs[0]?.fontSize;
     if (typeof first === "number" && first > 0) {
@@ -1161,14 +1200,28 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
   const lineHeight = lineHeightCss(node.lineHeight);
   const letterSpacing = letterSpacingCss(node.letterSpacing);
 
+  // When the TEXT is a target of a call-site `fontSize` override
+  // anywhere in the document, route through per-guid CSS variables
+  // so the wrapper can swap the rendered metric at the INSTANCE
+  // call site without losing the SYMBOL-author default. `lineHeight`
+  // is the partner field — Figma stores it as a multiplier or as
+  // PERCENT, so the SYMBOL author's 32 px / 48 px pair becomes a
+  // 42 px / 63 px pair at a breakpoint-scaled INSTANCE.
+  const fontSizeOverrideKey = fontSizeCssVariableFor(node, inputs);
+  const lineHeightOverrideKey = fontSizeOverrideKey ? lineHeightCssVariableFor(node) : undefined;
+
   if (family && styleName && fontSize !== undefined) {
     const tokenId = inputs.index.typographyIdFor(family, styleName, fontSize, lineHeight, letterSpacing);
     if (tokenId) {
       style.fontFamily = `var(--${tokenId}-font-family)`;
-      style.fontSize = `var(--${tokenId}-font-size)`;
+      style.fontSize = fontSizeOverrideKey
+        ? `var(${fontSizeOverrideKey}, var(--${tokenId}-font-size))`
+        : `var(--${tokenId}-font-size)`;
       style.fontWeight = `var(--${tokenId}-font-weight)`;
       if (lineHeight !== undefined) {
-        style.lineHeight = `var(--${tokenId}-line-height)`;
+        style.lineHeight = lineHeightOverrideKey
+          ? `var(${lineHeightOverrideKey}, var(--${tokenId}-line-height))`
+          : `var(--${tokenId}-line-height)`;
       }
       if (letterSpacing !== undefined) {
         style.letterSpacing = `var(--${tokenId}-letter-spacing)`;
@@ -1180,7 +1233,9 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
     style.fontFamily = quoteFontFamily(family);
   }
   if (!style.fontSize && fontSize !== undefined) {
-    style.fontSize = formatPx(fontSize);
+    style.fontSize = fontSizeOverrideKey
+      ? `var(${fontSizeOverrideKey}, ${formatPx(fontSize)})`
+      : formatPx(fontSize);
   }
   // Fall back to mapping the Figma style name (e.g. "Medium", "Bold",
   // "Light Italic") to its CSS numeric weight when the token path
@@ -1232,7 +1287,9 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
   // the authored value.
   const explicitPixels = explicitPixelLineHeight(node);
   if (explicitPixels !== undefined && explicitPixels > 0) {
-    style.lineHeight = formatPx(explicitPixels);
+    style.lineHeight = lineHeightOverrideKey
+      ? `var(${lineHeightOverrideKey}, ${formatPx(explicitPixels)})`
+      : formatPx(explicitPixels);
   } else {
     // Per-node override for AUTO / PERCENT: when the node carries
     // `derivedTextData.baselines`, its `lineHeight` field is the
@@ -1250,9 +1307,13 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
       // single-line text to its stored height so the inline box matches
       // the rendered bounds the parent's padding was sized against.
       const effective = clampLineHeightToBounds(node, derivedLh);
-      style.lineHeight = formatPx(effective);
+      style.lineHeight = lineHeightOverrideKey
+        ? `var(${lineHeightOverrideKey}, ${formatPx(effective)})`
+        : formatPx(effective);
     } else if (!style.lineHeight && lineHeight !== undefined) {
-      style.lineHeight = lineHeight;
+      style.lineHeight = lineHeightOverrideKey
+        ? `var(${lineHeightOverrideKey}, ${lineHeight})`
+        : lineHeight;
     }
   }
   if (!style.letterSpacing && letterSpacing !== undefined) {
@@ -1341,12 +1402,11 @@ function textCharactersContainExplicitLineBreak(node: FigNode): boolean {
   // high-level `addNode` builder populate the legacy top-level
   // `characters` field. Consult both, matching the resolution order
   // in `emit/render/jsx :: textCharacters`.
-  const fromTextData = (node as { readonly textData?: { readonly characters?: unknown } }).textData?.characters;
+  const fromTextData = node.textData?.characters;
   if (typeof fromTextData === "string" && fromTextData.includes("\n")) {
     return true;
   }
-  const fromLegacy = (node as { readonly characters?: unknown }).characters;
-  return typeof fromLegacy === "string" && fromLegacy.includes("\n");
+  return typeof node.characters === "string" && node.characters.includes("\n");
 }
 
 function clampLineHeightToBounds(node: FigNode, derivedLh: number): number {

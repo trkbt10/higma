@@ -95,4 +95,17 @@ export type EmitRegistry = {
    * overrides exist anywhere.
    */
   readonly imageFillOverrideTargets: ReadonlySet<string>;
+  /**
+   * Set of TEXT-node guids that some INSTANCE call site in the
+   * document overrides with a `fontSize` field. When emitting a
+   * SYMBOL body that owns the TEXT, the emitter writes its
+   * `font-size` as `var(--fs-<guid>, <default>)` so a call-site
+   * wrapper can inject the actually-rasterised size. Without this
+   * hop the SYMBOL's authored 32 px renders even at instance call
+   * sites where Figma's export shows 42 px (the breakpoint scaling
+   * case — `derivedTextData.glyphs[*].fontSize` differs from the
+   * SYMBOL author's stored value on the INSTANCE's resolved tree
+   * but not on the SYMBOL itself).
+   */
+  readonly fontSizeOverrideTargets: ReadonlySet<string>;
 };

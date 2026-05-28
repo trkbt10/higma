@@ -282,9 +282,8 @@ export function collectAuthoredTextOverridesByGuid(
     if (!guids || guids.length === 0) {
       return;
     }
-    const td = (override as { readonly textData?: { readonly characters?: unknown } }).textData;
-    const characters = typeof td?.characters === "string" ? td.characters : undefined;
-    if (characters === undefined) {
+    const characters = override.textData?.characters;
+    if (typeof characters !== "string") {
       return;
     }
     const targetGuidStr = resolveOverrideTextTargetGuid(instance, override, source);
@@ -362,8 +361,7 @@ function collectImpliedDefaultsForOverriddenSiblings(
         const overrides = inst.symbolData?.symbolOverrides ?? [];
         const set = new Set<string>();
         for (const override of overrides) {
-          const td = (override as { readonly textData?: { readonly characters?: unknown } }).textData;
-          if (typeof td?.characters !== "string") {
+          if (typeof override.textData?.characters !== "string") {
             continue;
           }
           const targetGuidStr = resolveOverrideTextTargetGuid(inst, override, source);
@@ -447,7 +445,7 @@ function resolveOverrideTextTargetGuid(
   // substituted. If exactly one resolved TEXT matches, key by it; if
   // ambiguous or unfound, return undefined and let the override
   // silently drop (the registry's behaviour pre-fix).
-  const incomingChars = (override as { readonly textData?: { readonly characters?: unknown } }).textData?.characters;
+  const incomingChars = override.textData?.characters;
   if (typeof incomingChars !== "string") {
     return undefined;
   }
@@ -457,7 +455,7 @@ function resolveOverrideTextTargetGuid(
     function visit(nodes: readonly FigNode[]): void {
       for (const node of nodes) {
         if (node.type?.name === "TEXT") {
-          const chars = (node as { readonly textData?: { readonly characters?: string } }).textData?.characters;
+          const chars = node.textData?.characters;
           if (chars === incomingChars) {
             matches.push(guidToString(node.guid));
           }
@@ -486,9 +484,9 @@ function findResolvedTextCharacters(
 ): string | undefined {
   for (const node of roots) {
     if (node.type?.name === "TEXT" && guidToString(node.guid) === guidStr) {
-      const td = (node as { readonly textData?: { readonly characters?: string } }).textData;
-      if (typeof td?.characters === "string") {
-        return td.characters;
+      const chars = node.textData?.characters;
+      if (typeof chars === "string") {
+        return chars;
       }
     }
     // The resolver does not attach a `.children` array; walk via the
@@ -723,12 +721,11 @@ function visitTextDescendantsInner(
 }
 
 function readTextCharacters(node: FigNode): string | undefined {
-  const td = (node as { readonly textData?: { readonly characters?: string } }).textData;
-  if (typeof td?.characters === "string") {
-    return td.characters;
+  const fromTextData = node.textData?.characters;
+  if (typeof fromTextData === "string") {
+    return fromTextData;
   }
-  const characters = (node as { readonly characters?: string }).characters;
-  return typeof characters === "string" ? characters : undefined;
+  return typeof node.characters === "string" ? node.characters : undefined;
 }
 
 /**
@@ -927,8 +924,63 @@ export function buildRegistry(source: FigDocumentContext, frames: readonly FigNo
   }
 
   const imageFillOverrideTargets = collectDocumentImageFillOverrideTargets(source, frames);
+  const fontSizeOverrideTargets = collectDocumentFontSizeOverrideTargets(source, frames);
 
-  return { frames: frameRegistry, components: componentRegistry, imageFillOverrideTargets };
+  return { frames: frameRegistry, components: componentRegistry, imageFillOverrideTargets, fontSizeOverrideTargets };
+}
+
+/**
+ * TEXT descendants whose `fontSize` is overridden by *some* INSTANCE
+ * call site somewhere in the document. The SYMBOL body emit
+ * indirects its `font-size` through a CSS variable so the call site
+ * can inject the actually-rasterised pixel value (the
+ * breakpoint-scaled hero on top-desktop is the canonical case: SYMBOL
+ * author=32 px, INSTANCE override=42 px).
+ */
+export function collectDocumentFontSizeOverrideTargets(
+  source: FigDocumentContext,
+  frames: readonly FigNode[],
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  const visited = new Set<string>();
+  function visit(node: FigNode): void {
+    if (node.type?.name === "INSTANCE") {
+      for (const override of node.symbolData?.symbolOverrides ?? []) {
+        if (typeof override.fontSize !== "number") {
+          continue;
+        }
+        const guids = override.guidPath?.guids;
+        if (!guids || guids.length === 0) {
+          continue;
+        }
+        const targetGuid = guids[guids.length - 1];
+        if (!targetGuid) {
+          continue;
+        }
+        out.add(guidToString(targetGuid));
+      }
+      const symbolGuid = node.symbolData?.symbolID;
+      if (symbolGuid) {
+        const key = guidToString(symbolGuid);
+        if (!visited.has(key)) {
+          visited.add(key);
+          const symbol = findNodeByGuid(source.document, symbolGuid);
+          if (symbol !== undefined) {
+            for (const child of source.document.childrenOf(symbol)) {
+              visit(child);
+            }
+          }
+        }
+      }
+    }
+    for (const child of source.document.childrenOf(node)) {
+      visit(child);
+    }
+  }
+  for (const frame of frames) {
+    visit(frame);
+  }
+  return out;
 }
 
 export function collectDocumentImageFillOverrideTargets(
@@ -948,13 +1000,11 @@ export function collectDocumentImageFillOverrideTargets(
         if (!targetGuid) {
           continue;
         }
-        const fps = (override as { readonly fillPaints?: readonly { readonly type?: { readonly name?: string } }[] })
-          .fillPaints;
+        const fps = override.fillPaints;
         if (!fps || fps.length === 0) {
           continue;
         }
-        const hasImage = fps.some((fp) => fp?.type?.name === "IMAGE");
-        if (!hasImage) {
+        if (!fps.some((fp) => fp.type?.name === "IMAGE")) {
           continue;
         }
         out.add(guidToString(targetGuid));
@@ -1000,10 +1050,7 @@ function collectDocumentOverriddenSymbolIDTargets(
         if (!targetGuid) {
           continue;
         }
-        const swap = (
-          override as { readonly overriddenSymbolID?: { readonly sessionID: number; readonly localID: number } }
-        ).overriddenSymbolID;
-        if (!swap) {
+        if (!override.overriddenSymbolID) {
           continue;
         }
         out.add(guidToString(targetGuid));
