@@ -1760,17 +1760,24 @@ function resolveColorVariable(
 }
 
 /**
- * Figma `FigVariableID` is `FigGuid | { assetRef: { key, version? } }`.
- * Only the in-document `FigGuid` form is resolvable via
- * `nodesByGuid`; the `assetRef` form points at an external library
- * variable whose colour value we don't have locally.
+ * Figma `FigVariableID` is `FigGuid | { assetRef: { key, version? } }`,
+ * but real .fig binaries sometimes wrap the guid as `{ guid: FigGuid }`
+ * (the canonical `FigKiwiVariableAnyValue.alias` shape from the
+ * parser). Accept both forms; the asset-ref form points at an
+ * external library variable whose colour value we don't have
+ * locally and is dropped.
  */
-function variableAliasGuid(alias: FigVariableID | undefined): FigGuid | undefined {
+function variableAliasGuid(
+  alias: FigVariableID | { readonly guid?: FigGuid } | undefined,
+): FigGuid | undefined {
   if (alias === undefined) {
     return undefined;
   }
   if ("sessionID" in alias && "localID" in alias) {
     return alias;
+  }
+  if ("guid" in alias && alias.guid !== undefined) {
+    return alias.guid;
   }
   return undefined;
 }

@@ -478,7 +478,7 @@ function applyCounterAxis(
     return;
   }
   const value = axis === "width" ? node.size.x : node.size.y;
-  if (canDropCounterDim(value, axis, parentContext)) {
+  if (canDropCounterDim(node, value, axis, parentContext)) {
     return;
   }
   style[axis] = formatPx(value);
@@ -499,10 +499,12 @@ function pickParentCounter(
 }
 
 function canDropCounterDim(
+  node: FigNode,
   value: number,
   axis: "width" | "height",
   parentContext: ParentContext | undefined,
 ): boolean {
+  void node;
   if (!parentContext) {
     return false;
   }
