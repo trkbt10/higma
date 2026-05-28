@@ -55,6 +55,11 @@
         "command": "higma.figViewer.chooseExportDirectory",
         "title": "Higma Fig Viewer: Choose Export Folder…",
         "category": "Higma Fig Viewer"
+      },
+      {
+        "command": "higma.figViewer.exportTokens",
+        "title": "Higma Fig Viewer: Export Design Tokens (JSON + CSS)",
+        "category": "Higma Fig Viewer"
       }
     ],
     "configuration": {
@@ -87,7 +92,8 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-figma-runtime/react-renderer": "workspace:*",
-    "@higma-primitives/tree": "workspace:*"
+    "@higma-primitives/tree": "workspace:*",
+    "@higma-tools/fig-to-tokens": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19.0.0",

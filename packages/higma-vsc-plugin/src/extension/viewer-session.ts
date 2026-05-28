@@ -262,6 +262,14 @@ export function createSessionManager(): SessionManager {
       }
       void promptChooseExportDirectory(session);
     }),
+    vscode.commands.registerCommand("higma.figViewer.exportTokens", () => {
+      const session = activeRef.value;
+      if (!session) {
+        void vscode.window.showInformationMessage(NO_VIEWER_MESSAGE);
+        return;
+      }
+      postToSession(session, { type: "viewer/exportTokens" });
+    }),
   ];
 
   return {

@@ -58,6 +58,8 @@ import { renderNodeToSvg } from "./export/render-node-svg";
 import { rasterizeSvg } from "./export/rasterize";
 import { buildExportFileName, deliverExportBlob } from "./export/download";
 import type { ExportRequest, ExportRollupStatus } from "./export/types";
+import { extractTokens, tokensToCss, tokensToJson } from "@higma-tools/fig-to-tokens";
+import type { TokenExportStatus } from "./export/types";
 import { parseExtensionMessage } from "./protocol-parse";
 import { postToExtension } from "./vscode-api";
 import {
@@ -108,6 +110,13 @@ type ZoomMode = "fit" | "manual";
 type Size = { readonly width: number; readonly height: number };
 
 type Cursor = { readonly x: number; readonly y: number };
+
+function stripFigExtension(fileName: string): string {
+  // Match .fig case-insensitively; fall back to the bare name when
+  // the loaded document has no extension (e.g. the dev harness's
+  // synthetic fixtures).
+  return fileName.replace(/\.fig$/i, "") || "design";
+}
 
 function clampZoom(value: number): number {
   if (value < MIN_ZOOM) {return MIN_ZOOM;}
@@ -192,10 +201,8 @@ function fitViewport(
 /** Render the VS Code fig viewer against a Kiwi document context. */
 export function FigViewer({ fileName, context, exportDirectoryLabel }: FigViewerProps) {
   // fileName is no longer painted into a header — VS Code's tab and
-  // window title already show it. The prop is retained because the
-  // outer App resolves it from `fig/loaded` and may need it again for
-  // future surfaces (status bar, accessibility labels).
-  void fileName;
+  // window title already show it. It is still used to derive token
+  // export filenames (`<stem>.tokens.json` / `.tokens.css`).
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const resources = useMemo<FigDocumentResources>(() => figDocumentResources(context), [context]);
@@ -856,6 +863,66 @@ export function FigViewer({ fileName, context, exportDirectoryLabel }: FigViewer
     [activePage, context, renderOptions, selectedFigNodes],
   );
 
+  // ----------------------------------------------------------------------
+  // Token export — runs `@higma-tools/fig-to-tokens` against the
+  // loaded document and writes one `.tokens.json` (DTCG) + one
+  // `.tokens.css` (custom properties with per-set mode selectors)
+  // through the same `viewer/exportFile` channel the layer rollup
+  // uses. The button lives in the InspectPanel's empty state and
+  // is also reachable from the Command Palette.
+  // ----------------------------------------------------------------------
+  const [tokenExportStatus, setTokenExportStatus] = useState<TokenExportStatus>({ kind: "idle" });
+
+  const handleExportTokens = useCallback(async () => {
+    setTokenExportStatus({ kind: "running" });
+    try {
+      const stem = stripFigExtension(fileName);
+      const tokens = extractTokens(context.document);
+      const jsonText = tokensToJson(tokens);
+      const cssText = tokensToCss(tokens);
+      const jsonFileName = `${stem}.tokens.json`;
+      const cssFileName = `${stem}.tokens.css`;
+      const [jsonOutcome, cssOutcome] = await Promise.all([
+        deliverExportBlob(
+          new Blob([jsonText], { type: "application/json;charset=utf-8" }),
+          jsonFileName,
+        ),
+        deliverExportBlob(
+          new Blob([cssText], { type: "text/css;charset=utf-8" }),
+          cssFileName,
+        ),
+      ]);
+      const errors: string[] = [];
+      if (jsonOutcome.kind === "error") {
+        errors.push(`${jsonFileName}: ${jsonOutcome.message}`);
+      }
+      if (cssOutcome.kind === "error") {
+        errors.push(`${cssFileName}: ${cssOutcome.message}`);
+      }
+      if (errors.length > 0) {
+        setTokenExportStatus({ kind: "error", message: errors.join("; ") });
+        return;
+      }
+      setTokenExportStatus({ kind: "done", fileNames: [jsonFileName, cssFileName] });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTokenExportStatus({ kind: "error", message });
+    }
+  }, [context, fileName]);
+
+  // Re-listen for `viewer/exportTokens` from the Command Palette path.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent<unknown>) => {
+      const message = parseExtensionMessage(event.data);
+      if (!message || message.type !== "viewer/exportTokens") {
+        return;
+      }
+      void handleExportTokens();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [handleExportTokens]);
+
   return (
     <div className="higma-fig-app">
       <div className="higma-fig-workspace">
@@ -908,6 +975,8 @@ export function FigViewer({ fileName, context, exportDirectoryLabel }: FigViewer
           exportStatus={exportStatus}
           exportDirectoryLabel={exportDirectoryLabel}
           onChooseExportDirectory={handleChooseExportDirectory}
+          onExportTokens={() => void handleExportTokens()}
+          tokenExportStatus={tokenExportStatus}
         />
       </div>
       {hoveredNode && cursor && <HoverTooltip node={hoveredNode} cursor={cursor} />}

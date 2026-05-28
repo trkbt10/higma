@@ -1,0 +1,28 @@
+{
+  "name": "@higma-tools/fig-to-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-tools/fig-to-tokens/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-tools/fig-to-tokens/src'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-document-models/fig": "workspace:*"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "tools",
+      "product": "fig"
+    }
+  }
+}

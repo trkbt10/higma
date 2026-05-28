@@ -34,7 +34,7 @@ import {
   type MixedDimension,
   type MixedSelectionSummary,
 } from "./inspect-summary";
-import type { ExportFormat, ExportRequest, ExportRollupStatus } from "../export/types";
+import type { ExportFormat, ExportRequest, ExportRollupStatus, TokenExportStatus } from "../export/types";
 
 type Props = {
   readonly selectedNodes: readonly FigNode[];
@@ -52,6 +52,9 @@ type Props = {
   readonly exportDirectoryLabel: string | null;
   /** Posts `viewer/chooseExportDirectory` so the host can show the folder picker. */
   readonly onChooseExportDirectory: () => void;
+  /** Triggers a Variables + Styles token export (JSON + CSS). */
+  readonly onExportTokens: () => void;
+  readonly tokenExportStatus: TokenExportStatus;
 };
 
 /** Render the right-hand inspector for the current Kiwi node selection. */
@@ -64,6 +67,10 @@ export function InspectPanel(props: Props) {
         <ExportDestinationSection
           exportDirectoryLabel={props.exportDirectoryLabel}
           onChooseExportDirectory={props.onChooseExportDirectory}
+        />
+        <TokenExportSection
+          onExportTokens={props.onExportTokens}
+          status={props.tokenExportStatus}
         />
         <div className="higma-fig-inspect__empty">
           Select a layer in the canvas or layers panel to inspect it.
@@ -559,6 +566,61 @@ function ExportSection({
       <ExportStatusReadout status={exportStatus} />
       {exportError && <div className="higma-fig-inspect__export-error">{exportError}</div>}
     </section>
+  );
+}
+
+type TokenExportSectionProps = {
+  readonly onExportTokens: () => void;
+  readonly status: TokenExportStatus;
+};
+
+/**
+ * Empty-state section that triggers a Variables + Styles token export.
+ *
+ * Emits two files into the configured output folder: a DTCG JSON and
+ * a CSS custom-properties file with per-set mode selectors. The
+ * status row mirrors `tokenExportStatus` from FigViewer so the same
+ * Command-Palette path the host owns (`higma.figViewer.exportTokens`)
+ * surfaces the same feedback the button does.
+ */
+function TokenExportSection({ onExportTokens, status }: TokenExportSectionProps) {
+  const running = status.kind === "running";
+  return (
+    <section
+      className="higma-fig-inspect__section"
+      aria-labelledby="higma-inspect-tokens"
+    >
+      <h3 id="higma-inspect-tokens" className="higma-fig-inspect__section-title">
+        Tokens
+      </h3>
+      <p className="higma-fig-inspect__tokens-hint">
+        Export every Variable (with all modes) and every Style as a DTCG JSON file
+        plus a CSS custom-properties file.
+      </p>
+      <button
+        type="button"
+        className="higma-fig-button higma-fig-button--primary higma-fig-inspect__tokens-button"
+        onClick={onExportTokens}
+        disabled={running}
+      >
+        {running ? "Exporting tokens…" : "Export tokens (JSON + CSS)"}
+      </button>
+      <TokenExportStatusReadout status={status} />
+    </section>
+  );
+}
+
+function TokenExportStatusReadout({ status }: { readonly status: TokenExportStatus }) {
+  if (status.kind === "idle" || status.kind === "running") {
+    return null;
+  }
+  if (status.kind === "error") {
+    return <div className="higma-fig-inspect__export-error">{status.message}</div>;
+  }
+  return (
+    <div className="higma-fig-inspect__export-success">
+      Wrote {status.fileNames.join(" + ")}.
+    </div>
   );
 }
 

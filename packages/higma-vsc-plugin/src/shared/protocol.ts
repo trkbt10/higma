@@ -62,6 +62,16 @@ export type ExtensionToWebviewMessage =
       readonly requestId: string;
       readonly fileName: string;
       readonly outcome: ExportResultOutcome;
+    }
+  | {
+      /**
+       * Host-initiated request for the webview to extract design
+       * tokens from the loaded `.fig` and deliver them through the
+       * existing `viewer/exportFile` channel (one JSON + one CSS
+       * file). Fired by the Command Palette entry as well as the
+       * "Export tokens" button in the InspectPanel.
+       */
+      readonly type: "viewer/exportTokens";
     };
 
 export type WebviewToExtensionMessage =

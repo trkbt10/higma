@@ -29,3 +29,15 @@ export type ExportRollupStatus =
       readonly succeeded: number;
       readonly failed: ReadonlyArray<{ readonly name: string; readonly message: string }>;
     };
+
+/**
+ * State of the token-export action. The JSON + CSS files emit in
+ * parallel via two `viewer/exportFile` round-trips; the panel reports
+ * a single rolled-up status because the two outcomes are conceptually
+ * one logical export.
+ */
+export type TokenExportStatus =
+  | { readonly kind: "idle" }
+  | { readonly kind: "running" }
+  | { readonly kind: "done"; readonly fileNames: readonly string[] }
+  | { readonly kind: "error"; readonly message: string };

@@ -673,6 +673,16 @@ button {
   color: var(--vscode-descriptionForeground);
 }
 
+.higma-fig-inspect__tokens-hint {
+  font-size: calc(var(--vscode-font-size) * 0.9);
+  color: var(--vscode-descriptionForeground);
+  margin: 0 0 8px 0;
+}
+
+.higma-fig-inspect__tokens-button {
+  margin-top: 0;
+}
+
 .higma-fig-inspect__export-destination-change {
   flex: 0 0 auto;
 }

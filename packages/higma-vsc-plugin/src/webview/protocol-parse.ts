@@ -40,6 +40,9 @@ export function parseExtensionMessage(raw: unknown): ExtensionToWebviewMessage |
   if (candidate.type === "viewer/exportResult") {
     return parseViewerExportResultMessage(raw);
   }
+  if (candidate.type === "viewer/exportTokens") {
+    return { type: "viewer/exportTokens" };
+  }
   return undefined;
 }
 
