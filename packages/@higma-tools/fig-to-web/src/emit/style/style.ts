@@ -1164,6 +1164,26 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
       style.fontWeight = String(weight);
     }
   }
+
+  // textTruncation: ENDING + maxLines: N → CSS line-clamp. Figma
+  // truncates text with an ellipsis when the rendered content
+  // exceeds the authored line limit; without the clamp, every line
+  // wraps inside the box and overflows the wrapper. card-news's
+  // title slot is the canonical example: source maxLines=2, the
+  // override string runs to three or four lines without ellipsis.
+  // `-webkit-line-clamp` covers Chrome, Safari, Firefox 68+, and is
+  // the only widely-supported way to do this declaratively.
+  const truncation = node.textTruncation?.name;
+  const maxLines = typeof node.maxLines === "number" ? node.maxLines : undefined;
+  if (truncation === "ENDING" && maxLines && maxLines > 0) {
+    style.display = "-webkit-box";
+    // React vendor-prefixed style keys use PascalCase
+    // (`WebkitBoxOrient`); lowercase `webkit…` is silently dropped.
+    style.WebkitBoxOrient = "vertical";
+    style.WebkitLineClamp = String(maxLines);
+    style.overflow = "hidden";
+    style.textOverflow = "ellipsis";
+  }
   // Authored line-height in PIXELS is the rendered per-line stride —
   // honour it verbatim. The derived-baseline path below addresses the
   // *AUTO / PERCENT* case where Figma's exporter pre-bakes the font's
