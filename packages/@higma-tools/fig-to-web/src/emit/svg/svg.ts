@@ -552,16 +552,14 @@ function buildImageFillPattern(
   // expressed by adjusting the scale so the shorter axis covers
   // 1.0 and the longer axis overflows, then centring the
   // overflow via the matrix `tx, ty`.
-  // `originalImageWidth` / `originalImageHeight` are populated by
-  // Figma's exporter on IMAGE paints but not declared on the
-  // `FigImagePaint` type (the Kiwi schema treats them as
-  // editor-only side-channel). Cast to read the runtime fields.
-  const extras = image as unknown as { readonly originalImageWidth?: number; readonly originalImageHeight?: number };
-  const origW = extras.originalImageWidth ?? 0;
-  const origH = extras.originalImageHeight ?? 0;
+  // `originalImageWidth` / `originalImageHeight` are the source image's
+  // natural pixel dimensions, carried on the IMAGE paint by Figma's
+  // exporter (Kiwi side-channel fields, declared on `FigImagePaint`).
+  const origW = image.originalImageWidth ?? 0;
+  const origH = image.originalImageHeight ?? 0;
   let imgEl: JsxNode;
   if (origW > 0 && origH > 0 && width > 0 && height > 0) {
-    const scaleMode = (image as unknown as { readonly imageScaleMode?: { readonly name?: string } }).imageScaleMode?.name;
+    const scaleMode = image.imageScaleMode?.name;
     // Path bbox aspect (units in pattern objectBoundingBox space
     // = path bbox width / height ratio).
     const bboxAspect = width / height;
@@ -599,12 +597,30 @@ function buildImageFillPattern(
         tx = remaining / 2;
       }
     } else {
-      // STRETCH / CROP / TILE — fall back to a simple stretch (Figma
-      // STRETCH paints exactly this). CROP / TILE deserve their own
-      // handling and currently fall through to stretch as a
-      // graceful approximation.
-      sx = 1 / origW;
-      sy = 1 / origH;
+      // STRETCH — the paint's `transform` carries Figma's Crop: it maps
+      // unit fill coords (x,y)∈[0,1] back to unit image coords
+      //   u = m00·x + m02,   v = m11·y + m12
+      // so the fill shows the image sub-rectangle [m02, m00+m02] ×
+      // [m12, m11+m12]. The pattern is in objectBoundingBox space, so
+      // the `<image>` (drawn at natural origW×origH px) must be scaled
+      // and offset so image pixel `m02·origW` lands at unit 0 and
+      // `(m00+m02)·origW` at unit 1 (and likewise vertically):
+      //   sx = 1/(m00·origW),  tx = −m02/m00
+      //   sy = 1/(m11·origH),  ty = −m12/m11
+      // An identity transform (m00=m11=1, m02=m12=0) reduces to the
+      // plain `1/origW, 1/origH` full stretch. Ignoring the transform
+      // (the previous behaviour) full-stretched the whole image and
+      // dropped every Crop, so a left-cropped photo showed squashed
+      // and complete instead of its authored framing.
+      const t = image.transform;
+      const m00 = t?.m00 ?? 1;
+      const m11 = t?.m11 ?? 1;
+      const m02 = t?.m02 ?? 0;
+      const m12 = t?.m12 ?? 0;
+      sx = m00 !== 0 ? 1 / (m00 * origW) : 1 / origW;
+      sy = m11 !== 0 ? 1 / (m11 * origH) : 1 / origH;
+      tx = m00 !== 0 ? -m02 / m00 : 0;
+      ty = m11 !== 0 ? -m12 / m11 : 0;
     }
     const matrix = `matrix(${sx} 0 0 ${sy} ${tx} ${ty})`;
     imgEl = el("image", {

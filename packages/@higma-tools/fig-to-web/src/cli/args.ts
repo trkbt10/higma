@@ -56,6 +56,12 @@ export type CliVariantStrategy = "discriminated" | "exploded";
  */
 export type CliAssetStrategy = "inline" | "externalize-complex";
 
+/**
+ * Layout sizing regime selected by the `--layout-sizing` CLI flag.
+ * Mirrors `LayoutSizing` from `emit/orchestrate.ts`.
+ */
+export type CliLayoutSizing = "fixed" | "liquid";
+
 export type CliOptions = {
   readonly input: string;
   readonly out: string;
@@ -72,6 +78,7 @@ export type CliOptions = {
   readonly variantStrategy: CliVariantStrategy;
   readonly assetStrategy: CliAssetStrategy;
   readonly assetComplexityThreshold: number;
+  readonly layoutSizing: CliLayoutSizing;
 };
 
 const USAGE = [
@@ -100,6 +107,8 @@ const USAGE = [
   "  --asset-strategy <s>     Vector subtree handling: inline (default) or externalize-complex",
   "                           (write subtrees above the complexity threshold to assets/icons/<slug>.svg).",
   "  --asset-threshold <N>    Complexity threshold for --asset-strategy externalize-complex (default: 200).",
+  "  --layout-sizing <mode>   Layout sizing regime: fixed (default — absolute px) or liquid (horizontal",
+  "                           lengths become viewport-relative %, fluid up to the authored width).",
   "  -h, --help               Show this banner",
 ].join("\n");
 
@@ -179,6 +188,15 @@ function parseAssetThreshold(raw: string): number {
   return n;
 }
 
+function parseLayoutSizing(raw: string): CliLayoutSizing {
+  if (raw === "fixed" || raw === "liquid") {
+    return raw;
+  }
+  throw new CliUsageError(
+    `--layout-sizing must be one of "fixed" | "liquid", got "${raw}"`,
+  );
+}
+
 /** Pure argv parser — no IO, easy to unit-test. */
 export function parseArgs(argv: readonly string[]): CliOptions {
   const accumulated = stepArgs(argv, 0, {});
@@ -208,6 +226,7 @@ export function parseArgs(argv: readonly string[]): CliOptions {
     variantStrategy: accumulated.variantStrategy ?? "discriminated",
     assetStrategy: accumulated.assetStrategy ?? "inline",
     assetComplexityThreshold: accumulated.assetComplexityThreshold ?? 200,
+    layoutSizing: accumulated.layoutSizing ?? "fixed",
   };
 }
 
@@ -229,6 +248,7 @@ type Accumulator = {
   variantStrategy?: CliVariantStrategy;
   assetStrategy?: CliAssetStrategy;
   assetComplexityThreshold?: number;
+  layoutSizing?: CliLayoutSizing;
 };
 
 function stepArgs(argv: readonly string[], i: number, acc: Accumulator): Accumulator {
@@ -292,6 +312,11 @@ function stepArgs(argv: readonly string[], i: number, acc: Accumulator): Accumul
       return stepArgs(argv, i + 2, {
         ...acc,
         assetComplexityThreshold: parseAssetThreshold(expectValue("--asset-threshold", argv[i + 1])),
+      });
+    case "--layout-sizing":
+      return stepArgs(argv, i + 2, {
+        ...acc,
+        layoutSizing: parseLayoutSizing(expectValue("--layout-sizing", argv[i + 1])),
       });
     default:
       throw new CliUsageError(`Unknown argument: ${token}`);

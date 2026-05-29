@@ -94,6 +94,7 @@ function makeOpts(): EmitOpts {
     assetStrategy: "inline",
     assetComplexityThreshold: 200,
     iconRegistry: undefined,
+    layoutSizing: "fixed",
   };
 }
 

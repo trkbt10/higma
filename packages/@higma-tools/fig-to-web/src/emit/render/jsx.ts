@@ -33,10 +33,9 @@ import { figmaFontToQuery, isItalic } from "@higma-document-models/fig/font";
 import type { TokenIndex } from "../../tokens";
 import type { EmitRegistry } from "../types";
 import type { ParentContext, ParentLayout, RootMode, StyleInputs } from "../style/style";
-import { nodeToStyle, parentLayoutOf } from "../style/style";
+import { nodeToStyle, parentLayoutOf, paintOrderZIndexMap } from "../style/style";
 import type { ImageElementEmission, ImageResolver } from "../style/paint";
 import { imageElementForNode } from "../style/paint";
-import { absorbBackgroundDecoration } from "../style/decoration";
 import { isPlainRule } from "../style/rule";
 import type { PropBindings } from "../plan/prop-bindings";
 import { componentTargetForInstance, SYNTHETIC_TEXT_PREFIX, SYNTHETIC_VARIANT_PREFIX, variantValueForInstance } from "../plan/registry";
@@ -44,7 +43,13 @@ import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import { collectPathsFor, emitMergedVectorSvg, emitVectorSvg, isVectorOnlyContainer, isVectorShaped } from "../svg/svg";
 import { hasOverrides, resolveTextRuns } from "../text/text-runs";
 import type { InferenceResult } from "../layout/infer-layout";
-import { inferLayout } from "../layout/infer-layout";
+import {
+  effectiveChildParentLayout,
+  isFigmaMaskNode,
+  isRendered,
+  resolveContainerLayout,
+} from "../layout/resolve";
+import type { LiquidOverlay, LiquidRootDirective } from "../layout/liquid";
 import { collapseChain } from "../layout/collapse";
 import type { ReparentResult } from "../layout/reparent";
 import { guidToString } from "@higma-document-models/fig/domain";
@@ -53,15 +58,12 @@ import type { FigPaint } from "@higma-document-models/fig/types";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
 import { el, expr, exprProp, flagProp, strProp, styleProp, text } from "../../lib/jsx-tree/builder";
 import type { IconRegistry } from "../assets/icons";
-import type { AssetStrategy } from "../orchestrate";
+import type { AssetStrategy, LayoutSizing } from "../orchestrate";
 import { complexityScore } from "@higma-document-renderers/fig/asset-plan";
 import { serializeSvgDocument } from "../style/strategy/svg-serialize";
 
 const TEXT_NODE_TYPE = "TEXT";
 const INSTANCE_NODE_TYPE = "INSTANCE";
-const NON_RENDERED_TYPES: ReadonlySet<string> = new Set([
-  "SLICE",
-]);
 
 export type EmitContext = {
   readonly source: FigDocumentContext;
@@ -142,6 +144,22 @@ export type EmitContext = {
    * carries proper nesting.
    */
   readonly reparent: ReparentResult;
+  /**
+   * Sizing regime for the inferred layout (`"fixed"` | `"liquid"`).
+   * Consulted by the page-root branch to decide whether to wrap the
+   * root in the liquid full-bleed shell. The per-node `px → %` rewrite
+   * is driven by {@link EmitContext.liquidOverlay}.
+   */
+  readonly layoutSizing: LayoutSizing;
+  /**
+   * Per-node relative-sizing overrides produced by the liquid
+   * translation pass (`layout/liquid.ts`). Empty in `"fixed"` mode, so
+   * `computeStyle` is an identity pass and the emitted px is unchanged.
+   * In `"liquid"` mode an entry's `%` values are spliced onto the
+   * fixed-px style record and the page root carries a full-bleed
+   * directive.
+   */
+  readonly liquidOverlay: LiquidOverlay;
 };
 
 function styleInputsOf(context: EmitContext): StyleInputs {
@@ -171,6 +189,157 @@ function parentContextOf(options: EmitOptions): ParentContext | undefined {
     return undefined;
   }
   return { alignItems: options.parentAlignItems, content: options.parentContent };
+}
+
+/**
+ * Compute a node's style record, then splice any liquid overlay entry
+ * onto it. In `"fixed"` mode the overlay is empty so this is exactly
+ * `nodeToStyle`. Funnelling every element emitter (container / text /
+ * vector / instance) through one helper keeps the liquid `px → %`
+ * rewrite in a single place.
+ */
+function computeStyle(
+  node: FigNode,
+  context: EmitContext,
+  rootMode: RootMode | undefined,
+  parentLayout: ParentLayout,
+  offsetBias: { readonly dx: number; readonly dy: number } | undefined,
+  inferred: InferenceResult,
+  parentContext: ParentContext | undefined,
+  paintZIndex: number | undefined,
+): Record<string, string> {
+  const style = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, offsetBias, inferred, parentContext, paintZIndex);
+  return applyLiquidOverlay(node, style, context.liquidOverlay);
+}
+
+/**
+ * Splice a liquid overlay entry onto a fixed-mode style record. Every
+ * rewrite is guarded by the presence of the property the emitter
+ * actually produced, so the pass can never *add* a dimension the fixed
+ * emit omitted (which would shift the layout at the authored width):
+ *
+ *   - `width` is rewritten only when the emitter pinned an explicit px
+ *     width (a FIXED flow child); a dropped / `auto` / `100%` width is
+ *     left for CSS to resolve;
+ *   - the `padding` shorthand is replaced with longhand (horizontal `%`,
+ *     vertical px preserved) only when padding was emitted;
+ *   - the `gap` shorthand becomes `column-gap` (`%`) + `row-gap` (px)
+ *     only for a flex-row that emitted a gap.
+ *
+ * The page-root full-bleed directive (`entry.root`) is applied
+ * separately by `emitContainerJsx`, not here.
+ */
+function applyLiquidOverlay(
+  node: FigNode,
+  style: Record<string, string>,
+  overlay: LiquidOverlay,
+): Record<string, string> {
+  const entry = overlay.get(guidToString(node.guid));
+  if (!entry) {
+    return style;
+  }
+  const out: Record<string, string> = { ...style };
+  if (entry.width !== undefined && typeof out.width === "string" && out.width.endsWith("px")) {
+    out.width = entry.width;
+  }
+  if (entry.paddingLeft !== undefined && out.padding !== undefined) {
+    delete out.padding;
+    if (entry.paddingTop !== undefined) {
+      out.paddingTop = entry.paddingTop;
+    }
+    if (entry.paddingRight !== undefined) {
+      out.paddingRight = entry.paddingRight;
+    }
+    if (entry.paddingBottom !== undefined) {
+      out.paddingBottom = entry.paddingBottom;
+    }
+    out.paddingLeft = entry.paddingLeft;
+  }
+  if (entry.columnGap !== undefined && out.gap !== undefined) {
+    delete out.gap;
+    out.columnGap = entry.columnGap;
+    if (entry.rowGap !== undefined) {
+      out.rowGap = entry.rowGap;
+    }
+  }
+  return out;
+}
+
+/**
+ * Style keys that paint (rather than lay out) — lifted onto the
+ * full-bleed outer wrapper a liquid page root emits so the background
+ * spans the viewport while the content column is capped and centred.
+ */
+const ROOT_VISUAL_KEYS: ReadonlySet<string> = new Set([
+  "background",
+  "backgroundColor",
+  "backgroundImage",
+  "backgroundSize",
+  "backgroundPosition",
+  "backgroundRepeat",
+  "backgroundClip",
+  "boxShadow",
+  "opacity",
+  "filter",
+  "backdropFilter",
+  "border",
+  "borderRadius",
+  "outline",
+  "outlineOffset",
+  "mixBlendMode",
+]);
+
+/**
+ * Partition a liquid page root's style into the full-bleed outer
+ * wrapper (paint + `min-height`, `width: 100%`) and the capped, centred
+ * inner content column (`max-width`, `margin: 0 auto`, layout). The
+ * authored `width` / `height` are dropped — the directive replaces them
+ * — so at the authored viewport width the outer is exactly the frame's
+ * width and the render matches fixed mode.
+ */
+function splitLiquidRoot(
+  style: Record<string, string>,
+  directive: LiquidRootDirective,
+): { readonly outer: Record<string, string>; readonly inner: Record<string, string> } {
+  const outer: Record<string, string> = { width: "100%", minHeight: directive.minHeight };
+  const inner: Record<string, string> = {
+    width: "100%",
+    maxWidth: directive.maxWidth,
+    marginLeft: "auto",
+    marginRight: "auto",
+  };
+  for (const [key, value] of Object.entries(style)) {
+    if (key === "width" || key === "height") {
+      continue;
+    }
+    if (ROOT_VISUAL_KEYS.has(key)) {
+      outer[key] = value;
+    } else {
+      inner[key] = value;
+    }
+  }
+  return { outer, inner };
+}
+
+/**
+ * Wrap a liquid page root's content in the full-bleed outer / capped
+ * inner pair. The semantic node's `data-fig-*` attributes and transform
+ * stay on the inner content div; the outer carries only the background.
+ */
+function wrapLiquidRoot(
+  style: Record<string, string>,
+  directive: LiquidRootDirective,
+  transform: string | undefined,
+  dataAttrs: readonly JsxProp[],
+  children: readonly JsxNode[],
+): JsxNode {
+  const { outer, inner } = splitLiquidRoot(style, directive);
+  const innerDiv = el("div", {
+    props: [...dataAttrs, styleAsProp(inner, transform)],
+    children,
+    layout: "block",
+  });
+  return el("div", { props: [styleProp(outer)], children: [innerDiv], layout: "block" });
 }
 
 /**
@@ -236,28 +405,6 @@ function childrenOfEmitNode(node: FigNode, context: EmitContext): readonly FigNo
     return overlay;
   }
   return context.source.document.childrenOf(node);
-}
-
-function isRendered(node: FigNode): boolean {
-  if (node.visible === false) {
-    return false;
-  }
-  if (NON_RENDERED_TYPES.has(node.type.name)) {
-    return false;
-  }
-  // Figma mask-children carry `mask: true`. They don't paint
-  // themselves — they only clip their following siblings. The mask
-  // application is handled by `applyMaskClipToFollowingSiblings`
-  // before children are emitted; here we drop the mask from the
-  // visible-children list so it never produces ink.
-  if (isFigmaMaskNode(node)) {
-    return false;
-  }
-  return true;
-}
-
-function isFigmaMaskNode(node: FigNode): boolean {
-  return node.mask === true;
 }
 
 /**
@@ -477,6 +624,14 @@ type EmitOptions = {
    * dropped — CSS auto-stretch produces the same result.
    */
   readonly parentContent?: { readonly width: number; readonly height: number };
+  /**
+   * Explicit paint-order `z-index` for this node within its parent.
+   * Set only when the parent is a flex / grid container that mixes
+   * in-flow and `position: absolute` children, so Figma's array-order
+   * painting must be restored (see `paintOrderZIndexMap`). `undefined`
+   * leaves the node at the CSS default `z-index: auto`.
+   */
+  readonly paintZIndex?: number;
 };
 
 function emitNodeJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
@@ -538,14 +693,15 @@ function emitVectorLeafJsx(
   options: EmitOptions,
   dataAttrs: readonly JsxProp[],
 ): JsxNode {
-  const svgStyle = nodeToStyle(
+  const svgStyle = computeStyle(
     node,
-    styleInputsOf(context),
+    context,
     options.rootMode,
     options.parentLayout,
     options.offsetBias,
     undefined,
     parentContextOf(options),
+    options.paintZIndex,
   );
   const transform = transformForNode(node, options.rootMode);
   const baseProps: JsxProp[] = [...dataAttrs, styleAsProp(svgStyle, transform)];
@@ -573,14 +729,15 @@ function emitVectorOnlyContainerJsx(
   if (!isVectorOnlyContainer(node, childrenOf)) {
     return undefined;
   }
-  const svgStyle = nodeToStyle(
+  const svgStyle = computeStyle(
     node,
-    styleInputsOf(context),
+    context,
     options.rootMode,
     options.parentLayout,
     options.offsetBias,
     undefined,
     parentContextOf(options),
+    options.paintZIndex,
   );
   const transform = transformForNode(node, options.rootMode);
   const wrapperProps: JsxProp[] = [...dataAttrs];
@@ -634,14 +791,13 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   // children emission. The decoration's removal often unlocks layout
   // inference on the remaining children — what was a 2-child overlap
   // pattern becomes a 1-child inset pattern.
-  const absorbed = absorbBackgroundDecoration(node, styleInputsOf(context));
   const rawChildren = childrenOfEmitNode(node, context);
-  const baseChildren = rawChildren
-    .filter(isRendered)
-    .filter((c) => c !== absorbed.absorbed);
-  const inferred = inferLayout(node, baseChildren);
+  const { absorbed, baseChildren, inferred } = resolveContainerLayout(node, {
+    childrenOf: (candidate) => childrenOfEmitNode(candidate, context),
+    styleInputs: styleInputsOf(context),
+  });
 
-  const computedStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, inferred, parentContextOf(options));
+  const computedStyle = computeStyle(node, context, rootMode, parentLayout, options.offsetBias, inferred, parentContextOf(options), options.paintZIndex);
   // Figma mask-child support: when the container's children include
   // a node with `mask: true`, the mask vector's fillGeometry defines
   // a clip applied to the remaining children. Emit it as CSS
@@ -673,13 +829,36 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   }
   const childParentLayout = effectiveChildParentLayout(node, inferred);
   const childContext = childContextFor(node, inferred, childParentLayout);
+  // Paint-order z-index. Only explicit auto-layout (`stackMode`) keeps
+  // its children un-reparented, so `rawChildren` is exactly the emitted
+  // set in Figma array (paint) order — the precondition for mapping a
+  // child's guid to a faithful z-index. Inferred layouts reparent into
+  // synthesized row groups whose guids aren't in `rawChildren`, so we
+  // skip them (the absolute-vs-flow mix the map targets only arises
+  // from authored `stackPositioning: ABSOLUTE` anyway).
+  const explicitStack = node.stackMode?.name;
+  const zIndexByGuid =
+    explicitStack === "VERTICAL" || explicitStack === "HORIZONTAL" || explicitStack === "GRID"
+      ? paintOrderZIndexMap(childParentLayout, rawChildren)
+      : undefined;
   const children = orderedChildren.map((child) => emitNodeJsx(child, context, {
     rootMode: undefined,
     parentLayout: childParentLayout,
     parentAlignItems: childContext.alignItems,
     parentContent: childContext.content,
+    paintZIndex: zIndexByGuid?.get(guidToString(child.guid)),
   }));
   const finalChildren = imageBody === undefined ? children : [imageBody, ...children];
+  // Liquid page root: wrap so the background bleeds full-width while the
+  // content column is capped at the authored width and centred. Only
+  // page roots carry a `root` directive (components embed fluidly), so
+  // this never fires for component roots or descendants.
+  const liquidRoot = rootMode === "page-root"
+    ? context.liquidOverlay.get(guidToString(node.guid))?.root
+    : undefined;
+  if (liquidRoot !== undefined) {
+    return wrapLiquidRoot(style, liquidRoot, transform, dataAttrs, finalChildren);
+  }
   return el("div", { props, children: finalChildren, layout: "block" });
 }
 
@@ -968,28 +1147,6 @@ function mergeAbsorbedStyle(
   return out;
 }
 
-/**
- * Compute the layout regime children of `node` should be emitted
- * under. Inferred row/column inferences flip the parent's regime to
- * the corresponding flex axis so children land in flow order. Inferred
- * "inset" still flows the single child under flex semantics — CSS
- * `padding` alone would leave a static child fixed at (0,0), but a
- * flex parent makes the inferred padding work without explicit
- * positioning.
- */
-function effectiveChildParentLayout(node: FigNode, inferred: InferenceResult): ParentLayout {
-  if (inferred?.direction === "row") {
-    return "flex-row";
-  }
-  if (inferred?.direction === "column") {
-    return "flex-column";
-  }
-  if (inferred?.direction === "inset") {
-    return "flex-row";
-  }
-  return parentLayoutOf(node);
-}
-
 function childrenForEmit(
   parent: FigNode,
   baseChildren: readonly FigNode[],
@@ -1061,7 +1218,7 @@ function emitVectorShapeJsx(node: FigNode, context: EmitContext, baseProps: read
 
 function emitTextJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
   const { rootMode, parentLayout } = options;
-  const style = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, undefined, parentContextOf(options));
+  const style = computeStyle(node, context, rootMode, parentLayout, options.offsetBias, undefined, parentContextOf(options), options.paintZIndex);
   const transform = transformForNode(node, rootMode);
   const dataAttrs = dataAttributes(node, context.debugAttrs);
   const baseProps: JsxProp[] = [...dataAttrs, styleAsProp(style, transform)];
@@ -1246,7 +1403,7 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   const importPath = relativeImportPath(context.emittingFile, target.filePath);
   context.imports.set(target.componentName, importPath);
 
-  const wrapStyle = nodeToStyle(node, styleInputsOf(context), options.rootMode, options.parentLayout, options.offsetBias, undefined, parentContextOf(options));
+  const wrapStyle = computeStyle(node, context, options.rootMode, options.parentLayout, options.offsetBias, undefined, parentContextOf(options), options.paintZIndex);
   const wrapTransform = transformForNode(node, options.rootMode);
 
   const variant = variantValueForInstance(context.source, context.registry, node);

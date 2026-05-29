@@ -173,7 +173,7 @@ export type RootMode = "page-root" | "component-root";
 export type ParentLayout = "flex-row" | "flex-column" | "grid" | "static" | "none";
 
 /** Per-child sizing along a flex axis, mirroring Figma's stack sizing enum. */
-type AxisSizing = "fixed" | "fill" | "hug";
+export type AxisSizing = "fixed" | "fill" | "hug";
 
 
 function strokeWidth(weight: FigStrokeWeight | undefined): number | undefined {
@@ -377,13 +377,150 @@ function childFlowsInParent(parent: ParentLayout, child: FigNode): boolean {
   return child.stackPositioning?.name !== "ABSOLUTE";
 }
 
-function axisSizingFrom(value: string | undefined): AxisSizing {
+/**
+ * Figma paints a frame's children strictly in array (`parentIndex`)
+ * order — the first child sits at the BOTTOM, the last on top. CSS
+ * diverges from this in exactly one situation: a flex / grid container
+ * that mixes in-flow items with a child opted out of the flow via
+ * `stackPositioning === "ABSOLUTE"`. There, a positioned element paints
+ * ABOVE its static flex siblings regardless of DOM order, so a
+ * decoration authored as the first (bottom) child — the rotated
+ * triangle behind the cards — surfaces ON TOP of the content instead.
+ *
+ * The faithful repair is the minimal one: per the flexbox / grid spec a
+ * static flex / grid item whose `z-index` is anything other than `auto`
+ * forms a stacking context WITHOUT needing `position`, so we only have
+ * to stamp each child with a `z-index` equal to its paint rank. No
+ * wrapper, no `position` change, no effect on the flow geometry
+ * (flex / grid layout ignores `z-index`).
+ *
+ * `paintOrder` must be the children in Figma array order (the order
+ * `childrenOf` returns — sorted by `parentIndex.position`). Returns a
+ * guid → z-index map when the correction applies; `undefined` when it
+ * does not (a non-flex / grid parent, or no absolute-vs-flow MIX, where
+ * CSS already paints siblings in author order).
+ */
+export function paintOrderZIndexMap(
+  parent: ParentLayout,
+  paintOrder: readonly FigNode[],
+): ReadonlyMap<string, number> | undefined {
+  if (parent !== "flex-row" && parent !== "flex-column" && parent !== "grid") {
+    return undefined;
+  }
+  let hasFlow = false;
+  let hasAbsolute = false;
+  for (const child of paintOrder) {
+    if (childFlowsInParent(parent, child)) {
+      hasFlow = true;
+    } else {
+      hasAbsolute = true;
+    }
+  }
+  if (!hasFlow || !hasAbsolute) {
+    return undefined;
+  }
+  const map = new Map<string, number>();
+  paintOrder.forEach((child, index) => {
+    map.set(guidToString(child.guid), index);
+  });
+  return map;
+}
+
+/**
+ * Map a Kiwi `StackSize` axis-sizing value to the emitter's tri-state.
+ *
+ * The real Kiwi enum is `FIXED | RESIZE_TO_FIT |
+ * RESIZE_TO_FIT_WITH_IMPLICIT_SIZE` — there is no `FILL`/`HUG` member
+ * (FILL is expressed separately via `stackChildPrimaryGrow`). Both
+ * `RESIZE_TO_FIT` variants mean "hug contents". `FIXED` is always
+ * stored explicitly, so an *omitted* value on an auto-layout frame
+ * (`autoLayoutFrame`) is Figma's hug default — emitting it as a fixed
+ * pixel size pins a button/label to its SYMBOL-authored width and
+ * makes longer prop-bound text overflow and overlap a sibling icon.
+ * A non-auto-layout node with an omitted value keeps `fixed` — its
+ * authored size is the only sizing signal it has.
+ *
+ * The legacy `FILL`/`HUG` spellings are still accepted because the
+ * high-level `addNode` builder emits them directly.
+ */
+/**
+ * Resolve the primary-axis sizing for an auto-layout child.
+ *
+ * Mostly defers to `axisSizingFrom`, but rescues one case the raw
+ * enum can't express: an auto-layout frame whose primary size is
+ * *omitted* (so `axisSizingFrom` would pin it to its authored px) but
+ * which wraps a prop-bound, auto-resizing TEXT. At a call site the
+ * INSTANCE swaps in a longer string than the SYMBOL default, so a
+ * fixed wrapper width clips/overflows it — the text spills out of its
+ * centred box and overlaps the neighbouring icon. Such a wrapper must
+ * hug so it grows to the runtime text. Frames with an *explicit*
+ * `FIXED` primary keep it; only the omitted-default case is rescued.
+ */
+function resolvePrimarySizing(node: FigNode, autoLayoutFrame: boolean, inputs: StyleInputs): AxisSizing {
+  const base = axisSizingFrom(node.stackPrimarySizing?.name, autoLayoutFrame);
+  if (base !== "fixed") {
+    return base;
+  }
+  if (!autoLayoutFrame || node.stackPrimarySizing?.name === "FIXED") {
+    return base;
+  }
+  if (frameWrapsPropBoundAutoText(node, inputs)) {
+    return "hug";
+  }
+  return base;
+}
+
+/**
+ * True when `node` is an auto-layout frame whose flow content includes
+ * a TEXT that both auto-resizes on width (`WIDTH_AND_HEIGHT`) and is
+ * bound to a component prop — i.e. its rendered width is determined at
+ * the call site, not by the SYMBOL-authored box.
+ */
+function frameWrapsPropBoundAutoText(node: FigNode, inputs: StyleInputs): boolean {
+  const bound = inputs.textBoundGuids;
+  if (!bound || bound.size === 0) {
+    return false;
+  }
+  const stack: FigNode[] = [...inputs.childrenOf(node)];
+  while (stack.length > 0) {
+    const child = stack.pop()!;
+    if (child.visible === false) {
+      continue;
+    }
+    if (
+      child.type.name === "TEXT"
+      && child.textAutoResize?.name === "WIDTH_AND_HEIGHT"
+      && bound.has(`${child.guid.sessionID}:${child.guid.localID}`)
+    ) {
+      return true;
+    }
+    for (const grandchild of inputs.childrenOf(child)) {
+      stack.push(grandchild);
+    }
+  }
+  return false;
+}
+
+/**
+ * Map a Kiwi `StackSize` axis-sizing value to the emitter's tri-state.
+ *
+ * The Kiwi enum is `FIXED | RESIZE_TO_FIT | RESIZE_TO_FIT_WITH_IMPLICIT_SIZE`;
+ * the high-level `addNode` builder also emits the legacy `FILL`/`HUG`
+ * spellings. `RESIZE_TO_FIT*` is deliberately treated as `fixed`, NOT
+ * `hug`: mapping every hug axis to CSS `auto` re-flows containers whose
+ * authored pixel size the surrounding layout was built against. The one
+ * case that genuinely needs hugging — an auto-layout wrapper around
+ * prop-bound, auto-resizing text — is rescued narrowly by
+ * `resolvePrimarySizing`.
+ */
+export function axisSizingFrom(value: string | undefined, autoLayoutFrame: boolean): AxisSizing {
   if (value === "FILL") {
     return "fill";
   }
   if (value === "HUG") {
     return "hug";
   }
+  void autoLayoutFrame;
   return "fixed";
 }
 
@@ -415,13 +552,15 @@ function applyChildSizing(
   style: Record<string, string>,
   parentContext: ParentContext | undefined,
   textBound: boolean,
+  inputs: StyleInputs,
 ): void {
   if (parent === "grid") {
     applyGridChildSizing(node, style);
     return;
   }
-  const primary = axisSizingFrom(node.stackPrimarySizing?.name);
-  const counter = axisSizingFrom(node.stackCounterSizing?.name);
+  const autoLayoutFrame = node.stackMode?.name === "VERTICAL" || node.stackMode?.name === "HORIZONTAL";
+  const primary = resolvePrimarySizing(node, autoLayoutFrame, inputs);
+  const counter = axisSizingFrom(node.stackCounterSizing?.name, autoLayoutFrame);
   const isRow = parent === "flex-row";
   const counterAxis: "width" | "height" = isRow ? "height" : "width";
   const primaryAxis: "width" | "height" = isRow ? "width" : "height";
@@ -783,6 +922,7 @@ export function nodeToStyle(
   offsetBias: { readonly dx: number; readonly dy: number } | undefined,
   inferred: InferenceResult,
   parentContext?: ParentContext,
+  paintZIndex?: number,
 ): Record<string, string> {
   const style: Record<string, string> = {};
   const inferredDirection = inferred?.direction;
@@ -807,6 +947,12 @@ export function nodeToStyle(
   // `<svg>` (vector) elements the emitter produces alongside `<div>`.
   style.boxSizing = "border-box";
   applyVisibilityOverride(node, inputs, style);
+  // Paint-order z-index: restore Figma's array-order painting when this
+  // node is a flow/absolute-mixed sibling (see `paintOrderZIndexMap`).
+  // Applied last so it lands on whatever box `applyLayout` produced.
+  if (paintZIndex !== undefined) {
+    style.zIndex = String(paintZIndex);
+  }
   return style;
 }
 
@@ -918,7 +1064,7 @@ function applyLayout(
     if (needsPositioningContext) {
       style.position = "relative";
     }
-    applyChildSizing(node, parent, style, parentContext, textBound);
+    applyChildSizing(node, parent, style, parentContext, textBound, inputs);
     return;
   }
 

@@ -125,6 +125,7 @@ function emitOptionsFrom(options: CliOptions): EmitFromFramesOptions {
     variantStrategy: options.variantStrategy,
     assetStrategy: options.assetStrategy,
     assetComplexityThreshold: options.assetComplexityThreshold,
+    layoutSizing: options.layoutSizing,
   };
 }
 

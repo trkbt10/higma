@@ -471,6 +471,25 @@ export type AssetStrategy = "inline" | "externalize-complex";
  */
 export type VariantStrategy = "discriminated" | "exploded";
 
+/**
+ * Sizing regime applied to the *web-inferred* layout as a post-process.
+ *
+ * - `"fixed"` (default): every authored dimension is emitted as an
+ *   absolute `px` length — the historical behaviour. The output is
+ *   pixel-faithful at the frame's authored width but does not adapt
+ *   to the viewport.
+ * - `"liquid"`: a translation pass (see `emit/layout/liquid.ts`)
+ *   re-expresses **horizontal** lengths (width, x-position, horizontal
+ *   padding, horizontal gap) as percentages of their containing box so
+ *   the page fluidly scales with the viewport up to the authored width.
+ *   Vertical lengths stay `px`. The translation reuses the same fig
+ *   context (`node.size` + the layout inference) the emitter consumes,
+ *   so at the authored width the liquid render is identical to the
+ *   fixed one. Selecting `"liquid"` is orthogonal to `cssMode` — the
+ *   chosen CSS-delivery strategy runs downstream, unchanged.
+ */
+export type LayoutSizing = "fixed" | "liquid";
+
 /** Options controlling emission output. */
 export type EmitFromFramesOptions = {
   /** Emit `data-fig-name` / `data-fig-type` attrs on every node. Default: false. */
@@ -513,6 +532,13 @@ export type EmitFromFramesOptions = {
    * decision so the two emitters cross over at the same node.
    */
   readonly assetComplexityThreshold?: number;
+  /**
+   * Sizing regime for the inferred layout. Default: `"fixed"`
+   * (absolute px, unchanged output). `"liquid"` re-expresses
+   * horizontal lengths as viewport-relative percentages — see
+   * {@link LayoutSizing}.
+   */
+  readonly layoutSizing?: LayoutSizing;
 };
 
 /**
@@ -528,6 +554,7 @@ export type ResolvedEmitOptions = {
   readonly variantStrategy: VariantStrategy;
   readonly assetStrategy: AssetStrategy;
   readonly assetComplexityThreshold: number;
+  readonly layoutSizing: LayoutSizing;
 };
 
 function resolveOptions(options: EmitFromFramesOptions): ResolvedEmitOptions {
@@ -559,6 +586,10 @@ function resolveOptions(options: EmitFromFramesOptions): ResolvedEmitOptions {
       `fig-to-web: assetComplexityThreshold must be a non-negative finite number, got ${assetComplexityThreshold}`,
     );
   }
+  const layoutSizing = options.layoutSizing ?? "fixed";
+  if (layoutSizing !== "fixed" && layoutSizing !== "liquid") {
+    throw new Error(`fig-to-web: layoutSizing "${layoutSizing}" is not a recognised value.`);
+  }
   return {
     debugAttrs: options.debugAttrs ?? false,
     cssMode,
@@ -567,6 +598,7 @@ function resolveOptions(options: EmitFromFramesOptions): ResolvedEmitOptions {
     variantStrategy,
     assetStrategy,
     assetComplexityThreshold,
+    layoutSizing,
   };
 }
 
@@ -633,6 +665,7 @@ export function createEmitSession(
     variantStrategy: resolved.variantStrategy,
     assetStrategy: resolved.assetStrategy,
     assetComplexityThreshold: resolved.assetComplexityThreshold,
+    layoutSizing: resolved.layoutSizing,
     imageResolver: imageRegistry.resolve,
     externalCssRegistry,
     externalStylesheetPath: EXTERNAL_STYLESHEET_PATH,

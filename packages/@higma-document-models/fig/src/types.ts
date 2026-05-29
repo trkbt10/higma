@@ -2039,6 +2039,10 @@ export type FigImagePaint = FigPaintBase & {
   readonly imageScaleMode?: KiwiEnumValue<FigImageScaleMode>;
   /** 2x3 affine transform for image positioning within the element */
   readonly transform?: FigImageTransform;
+  /** Natural pixel width of the source image (Kiwi `originalImageWidth`). */
+  readonly originalImageWidth?: number;
+  /** Natural pixel height of the source image (Kiwi `originalImageHeight`). */
+  readonly originalImageHeight?: number;
   /** Multiplier on the natural image size. */
   readonly scale?: number;
   /** Legacy Kiwi colour-adjustment payload. */

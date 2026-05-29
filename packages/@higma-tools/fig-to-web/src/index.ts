@@ -34,6 +34,7 @@ export type {
   EmitResult,
   ExportStyle,
   FrameTarget,
+  LayoutSizing,
   VariantStrategy,
 } from "./emit";
 export {

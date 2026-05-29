@@ -36,8 +36,9 @@ import { buildPropBindings } from "../plan/prop-bindings";
 import { collectAuthoredTextOverridesByGuid } from "../plan/registry";
 import { buildReparentResult } from "../layout/reparent";
 import { applyRowClustering } from "../layout/cluster";
+import { buildLiquidOverlay, type LiquidOverlay } from "../layout/liquid";
 import { serialize as serializeJsx } from "../../lib/jsx-tree/serialize";
-import type { AssetStrategy, CssImportStrategy, CssMode, ExportStyle, VariantStrategy } from "../orchestrate";
+import type { AssetStrategy, CssImportStrategy, CssMode, ExportStyle, LayoutSizing, VariantStrategy } from "../orchestrate";
 import type { IconRegistry } from "../assets/icons";
 import type { JsxNode } from "../../lib/jsx-tree/types";
 import {
@@ -122,6 +123,13 @@ export type EmitOpts = {
    * collected entries alongside image assets.
    */
   readonly iconRegistry: IconRegistry | undefined;
+  /**
+   * Sizing regime for the inferred layout. `"liquid"` makes
+   * `makeContext` build a per-node relative-sizing overlay the JSX
+   * emitter consults to emit `%` instead of `px`; `"fixed"` leaves
+   * the overlay empty so emission is byte-identical to before.
+   */
+  readonly layoutSizing: LayoutSizing;
 };
 
 const EMPTY_BINDINGS: PropBindings = new Map();
@@ -145,12 +153,35 @@ function makeContext(
   opts: EmitOpts,
   propBindings: PropBindings,
   rootNode: FigNode,
+  rootKind: "page" | "component",
 ): EmitContext {
   const overrides = collectAuthoredTextOverridesByGuid(source, rootNode);
   const distinctCount = new Map<string, number>();
   for (const [key, values] of overrides) {
     distinctCount.set(key, values.size);
   }
+  // The reparent/cluster overlay must be built once and shared: the
+  // liquid pass reads children through the SAME overlay-aware reader the
+  // JSX emitter uses (`childrenOfEmitNode`), so both agree on the tree
+  // when computing percentages vs emitting px.
+  const reparent = buildLayoutOverlay(source, rootNode);
+  const childrenOf = (node: FigNode): readonly FigNode[] => {
+    const overlay = reparent.childrenByParent.get(guidToString(node.guid));
+    return overlay !== undefined ? overlay : source.document.childrenOf(node);
+  };
+  const liquidOverlay: LiquidOverlay =
+    opts.layoutSizing === "liquid"
+      ? buildLiquidOverlay(rootNode, {
+          childrenOf,
+          // `resolveContainerLayout` only consults these for
+          // `absorbBackgroundDecoration` (which reads childrenOf / index /
+          // imageResolver) and `inferLayout` (which reads neither), so the
+          // absorb-relevant inputs are sufficient to mirror the emitter's
+          // layout decision exactly.
+          styleInputs: { index, imageResolver: opts.imageResolver, childrenOf },
+          rootKind,
+        })
+      : new Map();
   return {
     source,
     registry,
@@ -161,10 +192,12 @@ function makeContext(
     imports: new Map(),
     debugAttrs: opts.debugAttrs,
     propBindings,
-    reparent: buildLayoutOverlay(source, rootNode),
+    reparent,
     iconRegistry: opts.iconRegistry,
     assetStrategy: opts.assetStrategy,
     assetComplexityThreshold: opts.assetComplexityThreshold,
+    layoutSizing: opts.layoutSizing,
+    liquidOverlay,
     authoredTextOverrideDistinctValueCount: distinctCount,
   };
 }
@@ -423,7 +456,7 @@ export function emitPageFile(
   // Pages have no typed component props — they are not bound to a
   // SYMBOL — so `EMPTY_BINDINGS` lets the JSX emitter render
   // hard-coded TEXT characters verbatim.
-  const context = makeContext(source, registry, index, target.filePath, opts, EMPTY_BINDINGS, target.node);
+  const context = makeContext(source, registry, index, target.filePath, opts, EMPTY_BINDINGS, target.node, "page");
   const rawBodyNode = emitFrameJsx(target.node, context, "page-root");
   const strategy = createCssStrategy(target.componentName, opts);
   const bodyNode = strategy.rewrite(rawBodyNode);
@@ -764,7 +797,7 @@ export function emitComponentFile(
   // each TEXT node so a `componentPropRefs(TEXT_DATA)` slot reads
   // `{label}` instead of the SYMBOL-default literal.
   const bindings = buildPropBindings(target, source.document);
-  const context = makeContext(source, registry, index, target.filePath, opts, bindings, target.node);
+  const context = makeContext(source, registry, index, target.filePath, opts, bindings, target.node, "component");
   const isVariantSet = target.variants.size > 0;
 
   // Variant-set explosion: emit one standalone file per variant plus

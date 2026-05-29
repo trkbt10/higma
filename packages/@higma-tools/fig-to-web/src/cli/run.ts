@@ -100,6 +100,7 @@ export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_C
     variantStrategy: options.variantStrategy,
     assetStrategy: options.assetStrategy,
     assetComplexityThreshold: options.assetComplexityThreshold,
+    layoutSizing: options.layoutSizing,
   });
 
   for (const file of result.files) {
