@@ -720,7 +720,24 @@ function applyCounterAxisPosition<C extends PrimaryAxisChild>(
   const counterStart = horizontal ? insets.top : insets.left;
   const counterEnd = horizontal ? insets.bottom : insets.right;
   const counterParent = horizontal ? parent.size.y : parent.size.x;
-  const contentSpan = counterParent - counterStart - counterEnd;
+  const counterAxisLetterForSpan: "x" | "y" = horizontal ? "y" : "x";
+  // When the counter axis hugs its content (RESIZE_TO_FIT, including the
+  // implicit-size variant whose explicit size may have been clamped by a
+  // SYMBOL/INSTANCE size override), children align within the natural
+  // content block — the tallest child — anchored at the leading inset, not
+  // within the (possibly smaller) padded container box. Without this, a
+  // child taller than `containerSize − padding` produces negative free
+  // space and MAX/CENTER push it past the leading edge. Figma instead
+  // aligns relative to the tallest child (e.g. a 127px-tall hugged header
+  // whose 87px menu sits at the top inset while a 72px logo sits 15px
+  // below it). For FIXED counter sizing the container box is authoritative,
+  // so leave `contentSpan` as-is.
+  const counterSizingName = parent.stackCounterSizing?.name;
+  const counterHugs = counterSizingName === "RESIZE_TO_FIT" || counterSizingName === "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE";
+  const paddedSpan = counterParent - counterStart - counterEnd;
+  const contentSpan = counterHugs
+    ? Math.max(paddedSpan, ...flow.map((entry) => projectedAxisSpan(entry.child, counterAxisLetterForSpan)))
+    : paddedSpan;
   const align = parent.stackCounterAlignItems?.name;
   const result: C[] = children.slice();
   for (const entry of flow) {
