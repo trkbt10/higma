@@ -1,340 +1,208 @@
 /**
- * @file Liquid layout translation — the post-process that re-expresses
- * a web-inferred layout's **horizontal** lengths as percentages of their
- * containing box so the emitted page fluidly scales with the viewport.
+ * @file Liquid layout translation — re-express a fixed-width design so it
+ * shrinks uniformly to fit the viewport, the standard "px → vw via calc"
+ * technique.
  *
- * Why a separate upstream pass (peer of `reparent` / `cluster` /
- * `infer-layout`): the percentage `childWidth / parentContentWidth` is
- * only correct when the denominator matches the layout the emitter
- * actually produced. This pass therefore reuses the *same fig context*
- * the emitter consumes — `node.size`, the reparent/cluster child reader,
- * and `resolveContainerLayout` (which runs the identical `inferLayout`).
- * It does NOT read the emitted CSS tree (where `auto` / `100%` / flex
- * widths have erased the px the denominator needs). Selecting liquid is
- * orthogonal to `cssMode`: the chosen CSS-delivery strategy runs
- * downstream on whatever values this pass produced.
+ * A design authored at width `W` should, at viewport width `V`, render at
+ * scale `V / W` below `W` and freeze at its authored size at / above `W`.
+ * That single uniform factor is carried by one inherited CSS unit:
  *
- * Output: a `guid → LiquidOverlayEntry` map the JSX emitter consults
- * (via `applyLiquidOverlay`) to splice `%` values onto the otherwise
- * fixed-px style record. At the authored width every `%` resolves back
- * to its original px, so the liquid render is identical to the fixed
- * render — the invariant the visual harness checks.
+ *   --lqd: min(1vw, (W / 100)px);
  *
- * ## Scope (v1)
+ *   - below the design width `1vw = V/100 px` is the smaller term, so
+ *     `--lqd = V/100 px` and the page scales with the viewport;
+ *   - at / above the design width `(W/100)px` is the smaller term, so
+ *     `--lqd` freezes and the page stays at its authored size.
  *
- * Only the **flow** children of flex-row / flex-column / inset
- * containers are fluidised, plus the page root and each container's own
- * horizontal padding / row-gap. Flow children are never run through
- * `collapseChain` (the emitter short-circuits collapse under a flex
- * parent), so this pass and the emitter agree on their parent and size
- * with no collapse-bias bookkeeping.
+ * Every authored length `L px` becomes `calc(L/W*100 * var(--lqd))`:
+ *   - below `W`: `= L/W*100 * V/100 px = L * V/W` (scaled);
+ *   - at / above `W`: `= L/W*100 * W/100 px = L px` (frozen).
  *
- * Deliberately left at fixed px in v1 (documented boundaries):
- *   - **Absolutely-positioned children** (children of a static frame
- *     where inference declined, and `stackPositioning: ABSOLUTE`
- *     overlays). Their emitted `left` carries collapsed-wrapper bias and
- *     resolves against the padding box, so a faithful `%` needs the
- *     emitter's collapse bookkeeping — out of scope here. Their whole
- *     subtree stays fixed.
- *   - **CSS-Grid containers** (`stackMode: GRID`): tracks are already
- *     `fr` / `minmax`, i.e. intrinsically fluid.
- *   - **Vertical** lengths (height, y, top, row-gap, vertical padding):
- *     liquid is horizontal-only by request.
+ * Because EVERY length (width, height, top, left, padding, gap,
+ * font-size, radius, shadow offsets, …) uses the same factor, the whole
+ * page is a similarity transform of the viewport width — **aspect ratio
+ * is preserved** without the `aspect-ratio` property, and without a
+ * `transform: scale()` (this is real layout: text stays crisp and
+ * selectable, the box model is honoured). The cap + centring replace a
+ * `max-width` wrapper, so no extra `<body>`-duplicating div is emitted.
+ *
+ * The translation is a pure transform of the emitted style record keyed
+ * only on the design width, so it is orthogonal to `cssMode`: whatever
+ * CSS-delivery strategy runs downstream simply packages the `calc(...)`
+ * values.
+ *
+ * Known limitations (documented, not silently handled):
+ *   - Lengths already emitted as design-token references
+ *     (`var(--spacing-…)`) are not scaled — they carry no px literal to
+ *     rewrite. Tokenised spacing therefore stays fixed.
+ *   - A referenced component re-bases `--lqd` to its OWN authored width,
+ *     so deep nesting scales relative to the component rather than the
+ *     embedding page. Identical at the design width; mildly divergent
+ *     below it.
  */
-import type { FigNode } from "@higma-document-models/fig/types";
-import { guidToString } from "@higma-document-models/fig/domain";
-import type { ParentLayout, StyleInputs, AxisSizing } from "../style/style";
-import { axisSizingFrom } from "../style/style";
-import { round2, formatPx } from "../../lib/css-format/numeric";
-import type { InferenceResult } from "./infer-layout";
-import { effectiveChildParentLayout, isRendered, resolveContainerLayout } from "./resolve";
+import { round2 } from "../../lib/css-format/numeric";
+import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
+import { el, styleProp } from "../../lib/jsx-tree/builder";
+import type { TokenIndex } from "../../tokens";
 
-/**
- * The full-bleed page-root directive. The emitter wraps a page root so
- * the background paints span the viewport (`width: 100%`) while the
- * content column is capped (`max-width`) and centred. `minHeight` keeps
- * the authored height as a floor so reflowed content grows rather than
- * clips.
- */
-export type LiquidRootDirective = {
-  readonly maxWidth: string;
-  readonly minHeight: string;
+/** Configuration for a liquid emit: the design width every length scales against. */
+export type LiquidConfig = {
+  /** Authored width of the emit's root frame — the denominator of the scale. */
+  readonly designWidth: number;
 };
 
-/**
- * Pre-formatted horizontal-sizing overrides for one node. Every value is
- * a finished CSS string the consumer splices onto the fixed-mode style
- * record (see `applyLiquidOverlay` in `render/jsx.ts`). Horizontal
- * entries are `%`; the vertical padding / row-gap companions are `px`
- * so the consumer can replace the `padding` / `gap` shorthand wholesale
- * without re-deriving the vertical components from a possibly-tokenised
- * string.
- */
-export type LiquidOverlayEntry = {
-  /** Flow-child width as a percentage of the parent content box. */
-  readonly width?: string;
-  /** Longhand vertical padding (`px`, preserved) — paired with the horizontal `%`. */
-  readonly paddingTop?: string;
-  readonly paddingBottom?: string;
-  /** Longhand horizontal padding as a percentage of the containing block. */
-  readonly paddingLeft?: string;
-  readonly paddingRight?: string;
-  /** flex-row horizontal gap as a percentage of the container content box. */
-  readonly columnGap?: string;
-  /** Preserved vertical gap (`px`) for the same container — relevant when the row wraps. */
-  readonly rowGap?: string;
-  /** Page-root full-bleed directive (set on the page root only). */
-  readonly root?: LiquidRootDirective;
-};
-
-export type LiquidOverlay = ReadonlyMap<string, LiquidOverlayEntry>;
-
-export type BuildLiquidOverlayDeps = {
-  /** Reparent/cluster-aware child reader (the emitter's `childrenOfEmitNode`). */
-  readonly childrenOf: (node: FigNode) => readonly FigNode[];
-  /** Style inputs `resolveContainerLayout` threads into `absorbBackgroundDecoration`. */
-  readonly styleInputs: StyleInputs;
-  /**
-   * Whether the root is a page (gets the full-bleed `max-width` shell)
-   * or a component (embeds fluidly; no shell, internals still fluidised).
-   */
-  readonly rootKind: "page" | "component";
-};
+/** The node's role in its file, which decides whether it seeds the scale unit. */
+export type LiquidRole = "page-root" | "component-root" | "descendant";
 
 /**
- * Express `px` as a percentage of `denom`, rounded to the same 2-decimal
- * precision the px formatter uses. Throws when the denominator is not a
- * usable positive width — per the fail-fast policy, a missing content
- * width means the layout decision diverged and the `%` would be a guess.
+ * A token index that suppresses every SIZE-bearing design token
+ * (spacing / radius / shadow / typography) while keeping colour tokens.
+ *
+ * Why: size tokens resolve to fixed px in the shared `tokens.css`, which
+ * the per-page liquid pass cannot scale (the sheet is global; pages have
+ * different design widths). Forcing those lengths to inline px instead —
+ * the emitter already falls back to px when the index returns no id, and
+ * still emits `font-weight` via `detectWeight`, so nothing is lost — lets
+ * the tree pass scale them per page. Colours are never scaled, so their
+ * tokens stay intact.
  */
-export function liquidPercent(px: number, denom: number): string {
-  if (!Number.isFinite(px)) {
-    throw new Error(`liquid: non-finite length ${px} cannot be made relative.`);
-  }
-  if (!Number.isFinite(denom) || denom <= 0) {
-    throw new Error(`liquid: containing width must be a positive finite number, got ${denom}.`);
-  }
-  return `${round2((px / denom) * 100)}%`;
+export function detokenizeSizingTokens(index: TokenIndex): TokenIndex {
+  return {
+    colorIdForPaints: index.colorIdForPaints,
+    spacingIdFor: () => undefined,
+    radiusIdFor: () => undefined,
+    shadowIdFor: () => undefined,
+    typographyIdFor: () => undefined,
+  };
+}
+
+/** Inherited custom property carrying the capped per-viewport scale unit. */
+const LIQUID_UNIT = "--lqd";
+/**
+ * The scale unit an INSTANCE wrapper hands DOWN to its component subtree.
+ * A reusable component cannot key off the viewport (`vw`) — it must scale
+ * with the box it is dropped into. The wrapper, which knows both its
+ * parent scope's width and the component's authored width, derives this
+ * from its parent's `--lqd`; the component root then adopts it as its own
+ * `--lqd`. Each nesting level re-derives from its parent's `--lqd`, so the
+ * chain composes to any depth with no self-referential cycle.
+ */
+const LIQUID_UNIT_DOWN = "--lqd-down";
+
+function round4(n: number): number {
+  return Math.round(n * 1e4) / 1e4;
 }
 
 /**
- * Node types whose width must NOT be rewritten to `%`: TEXT (content
- * drives its box; the emitter pins single-line measurement) and vector
- * shapes (their emitted box may be expanded off the authored size to
- * carry a stroke centreline, so `node.size.x` is not the rendered px).
+ * The `--lqd-down` declaration an INSTANCE wrapper sets so its component
+ * subtree scales with the page rather than freezing at the component's
+ * own (small) design width. `componentWidth / parentWidth` is the
+ * component's footprint in its parent scope; multiplying the parent's
+ * `--lqd` by it yields the component's local unit.
  */
-const NON_LIQUID_WIDTH_TYPES: ReadonlySet<string> = new Set([
-  "TEXT",
-  "VECTOR",
-  "LINE",
-  "STAR",
-  "REGULAR_POLYGON",
-  "BOOLEAN_OPERATION",
-]);
-
-function liquefiableWidth(node: FigNode): boolean {
-  return !NON_LIQUID_WIDTH_TYPES.has(node.type.name);
-}
-
-type PaddingNums = { readonly t: number; readonly r: number; readonly b: number; readonly l: number };
-
-/**
- * The container's resolved padding, mirroring the emitter exactly:
- * explicit auto-layout reads the `stack*Padding` fields (the same
- * precedence `collapsePadding` uses), an inferred stack/inset reads the
- * descriptor's numeric paddings, and everything else has none. Returns
- * `undefined` when the emitter would emit no `padding` at all.
- */
-function paddingNums(node: FigNode, inferred: InferenceResult): PaddingNums | undefined {
-  if (inferred && (inferred.direction === "row" || inferred.direction === "column" || inferred.direction === "inset")) {
-    const { paddingTop: t, paddingRight: r, paddingBottom: b, paddingLeft: l } = inferred;
-    if (t === 0 && r === 0 && b === 0 && l === 0) {
-      return undefined;
-    }
-    return { t, r, b, l };
-  }
-  // Explicit auto-layout padding (same field precedence as collapsePadding).
-  const top = node.stackVerticalPadding ?? node.stackPadding;
-  const left = node.stackHorizontalPadding ?? node.stackPadding;
-  const right = node.stackPaddingRight ?? left;
-  const bottom = node.stackPaddingBottom ?? top;
-  if (top === undefined && left === undefined && right === undefined && bottom === undefined) {
-    return undefined;
-  }
-  return { t: top ?? 0, r: right ?? 0, b: bottom ?? 0, l: left ?? 0 };
+export function instanceScaleVar(componentWidth: number, parentWidth: number): { readonly key: string; readonly value: string } {
+  const ratio = round4(componentWidth / parentWidth);
+  return { key: LIQUID_UNIT_DOWN, value: `calc(var(${LIQUID_UNIT}) * ${ratio})` };
 }
 
 /**
- * The horizontal gap the emitter emits for a flex-row container, or
- * `undefined` when none. Mirrors `applyExplicitStack` (no gap under
- * SPACE_BETWEEN / SPACE_EVENLY, which distribute their own spacing) and
- * `applyInferredStack` (the inferred uniform gap).
+ * Express one authored pixel length as a fluid `calc(...)` against the
+ * shared scale unit. `0` stays `0px` (it scales to nothing either way).
  */
-function rowGapPx(node: FigNode, inferred: InferenceResult): number | undefined {
-  if (inferred && inferred.direction === "row") {
-    return inferred.gap > 0 ? inferred.gap : undefined;
+function liquidLength(px: number, designWidth: number): string {
+  if (px === 0) {
+    return "0px";
   }
-  const primary = node.stackPrimaryAlignItems?.name;
-  const distributed = primary === "SPACE_BETWEEN" || primary === "SPACE_EVENLY";
-  if (typeof node.stackSpacing === "number" && node.stackSpacing > 0 && !distributed) {
-    return node.stackSpacing;
-  }
-  return undefined;
+  const factor = round4((px / designWidth) * 100);
+  return `calc(${factor} * var(${LIQUID_UNIT}))`;
 }
 
 /**
- * The flow children of `node` — those that participate in the inferred
- * or authored stack (and are therefore never collapse-shifted). Absolute
- * overlays and the children of a static / un-inferred frame are excluded
- * so the v1 pass leaves their subtrees at fixed px.
+ * Rewrite every `<n>px` literal in a CSS value to its fluid `calc(...)`
+ * form. Handles shorthands (`padding: 8px 16px`), multi-value props
+ * (`box-shadow: 0px 2px 4px …`), and `border: 1px solid …` uniformly,
+ * while leaving `%` / `auto` / `var(--token)` / colours untouched.
  */
-function flowChildren(
-  node: FigNode,
-  inferred: InferenceResult,
-  kind: ParentLayout,
-  baseChildren: readonly FigNode[],
-): readonly FigNode[] {
-  if (inferred && (inferred.direction === "row" || inferred.direction === "column")) {
-    return inferred.orderedChildren.filter(isRendered);
-  }
-  if (inferred && inferred.direction === "inset") {
-    return [inferred.child];
-  }
-  if (kind === "flex-row" || kind === "flex-column" || kind === "grid") {
-    return baseChildren.filter((c) => c.stackPositioning?.name !== "ABSOLUTE");
-  }
-  return [];
+function scaleLengths(value: string, designWidth: number): string {
+  return value.replace(/-?\d*\.?\d+px/g, (match) => liquidLength(Number.parseFloat(match), designWidth));
 }
 
 /**
- * The sizing of a flow child along the axis that maps to CSS `width`.
- * In a row that is the primary axis; in a column the counter axis. An
- * inset child (the emitter flows it as a row) and inferred-stack
- * children carry no `stack*Sizing`, so they resolve to `fixed` and get a
- * width `%`.
+ * Liquefy a node's fixed-px style record. Descendants only have their
+ * lengths rewritten; a root additionally seeds the `--lqd` scale unit
+ * (so its subtree inherits the same factor). A page root also centres
+ * the capped column (`margin: 0 auto`), lets it grow (`height` →
+ * `min-height`), and drops `overflow` so the fluid page never clips
+ * itself.
  */
-function childWidthSizing(kind: ParentLayout, child: FigNode): AxisSizing {
-  if (kind === "flex-column") {
-    return axisSizingFrom(child.stackCounterSizing?.name, false);
+export function liquefyStyle(
+  style: Record<string, string>,
+  designWidth: number,
+  role: LiquidRole,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(style)) {
+    out[key] = scaleLengths(value, designWidth);
   }
-  return axisSizingFrom(child.stackPrimarySizing?.name, false);
-}
-
-type WalkContext = {
-  /**
-   * Width of this node's containing block — the denominator for its
-   * flow `width` and own horizontal `padding`. The parent's content box
-   * for a descendant; the root's own width for the root (it fills the
-   * viewport up to `max-width = size.x`).
-   */
-  readonly containingBlockWidth: number;
-  /** Whether the parent fluidises this node's width (flex-row / flex-column flow). */
-  readonly widthFluid: boolean;
-  /** This node's sizing on the width axis (only consulted when `widthFluid`). */
-  readonly widthSizing: AxisSizing;
-  readonly isRoot: boolean;
-};
-
-function emptyEntry(): {
-  width?: string;
-  paddingTop?: string;
-  paddingBottom?: string;
-  paddingLeft?: string;
-  paddingRight?: string;
-  columnGap?: string;
-  rowGap?: string;
-  root?: LiquidRootDirective;
-} {
-  return {};
+  if (role === "descendant") {
+    return out;
+  }
+  if (role === "component-root") {
+    // A component adopts the scale unit its INSTANCE wrapper handed down
+    // (`--lqd-down`), so it scales with the page that placed it. The
+    // fallback covers a component viewed on its own standalone page,
+    // where no wrapper exists: it then scales against its own width.
+    out[LIQUID_UNIT] = `var(${LIQUID_UNIT_DOWN}, min(1vw, ${round2(designWidth / 100)}px))`;
+    return out;
+  }
+  // Page root: seed the viewport scale unit AFTER the rewrite, so its own
+  // `px` term (the cap) is not itself scaled.
+  out[LIQUID_UNIT] = `min(1vw, ${round2(designWidth / 100)}px)`;
+  out.marginLeft = "auto";
+  out.marginRight = "auto";
+  delete out.overflow;
+  if (out.height !== undefined) {
+    out.minHeight = out.height;
+    delete out.height;
+  }
+  return out;
 }
 
 /**
- * Build the liquid overlay for one emitted file's root subtree. Walks
- * the same (reparent/cluster-resolved) tree the emitter renders.
+ * Liquefy an entire emitted JSX subtree: rewrite every `style` prop's
+ * lengths to their fluid `calc(...)` form, and seed `--lqd` on the root.
+ *
+ * Running over the finished tree (rather than per node during emission)
+ * is what makes the scaling COMPLETE: it catches every style — the main
+ * node style, per-run text styles, INSTANCE override CSS variables
+ * (`--fs-…` / `--lh-…`), structural-image styles, scale wrappers —
+ * regardless of which emit path produced it. Anything left at a fixed px
+ * while the layout around it scaled is exactly what makes text overflow
+ * its box; one uniform pass removes that whole class of bug.
+ *
+ * Pure `JsxNode → JsxNode`, keyed only on the design width, so it
+ * composes before the `cssMode` delivery rewriter (which then packages
+ * the `calc(...)` values) — orthogonal, not a delivery strategy itself.
  */
-export function buildLiquidOverlay(root: FigNode, deps: BuildLiquidOverlayDeps): LiquidOverlay {
-  const overlay = new Map<string, LiquidOverlayEntry>();
-  if (!root.size) {
-    return overlay;
+export function rewriteForLiquid(node: JsxNode, designWidth: number, role: LiquidRole): JsxNode {
+  if (node.kind === "text" || node.kind === "expr") {
+    return node;
   }
-  walk(root, { containingBlockWidth: root.size.x, widthFluid: false, widthSizing: "fixed", isRoot: true }, deps, overlay);
-  return overlay;
+  if (node.kind === "fragment") {
+    return { kind: "fragment", children: node.children.map((child) => rewriteForLiquid(child, designWidth, "descendant")) };
+  }
+  const props = node.props.map((prop) => liquefyProp(prop, designWidth, role));
+  const children = node.children.map((child) => rewriteForLiquid(child, designWidth, "descendant"));
+  return el(node.tag, { props, children, layout: node.layout });
 }
 
-function walk(
-  node: FigNode,
-  ctx: WalkContext,
-  deps: BuildLiquidOverlayDeps,
-  overlay: Map<string, LiquidOverlayEntry>,
-): void {
-  if (!node.size) {
-    return;
+function liquefyProp(prop: JsxProp, designWidth: number, role: LiquidRole): JsxProp {
+  if (prop.kind !== "style") {
+    return prop;
   }
-  const { inferred, baseChildren } = resolveContainerLayout(node, {
-    childrenOf: deps.childrenOf,
-    styleInputs: deps.styleInputs,
-  });
-  const kind = effectiveChildParentLayout(node, inferred);
-  const pads = paddingNums(node, inferred);
-  const hPad = pads ? pads.l + pads.r : 0;
-  const ownContentWidth = node.size.x - hPad;
-
-  const entry = emptyEntry();
-
-  // This node's own width, when its parent fluidises it.
-  if (ctx.widthFluid && ctx.widthSizing === "fixed" && liquefiableWidth(node) && ctx.containingBlockWidth > 0) {
-    entry.width = liquidPercent(node.size.x, ctx.containingBlockWidth);
+  const record: Record<string, string> = {};
+  for (const entry of prop.entries) {
+    record[entry.key] = entry.value;
   }
-
-  // This node's own horizontal padding (% of its containing block); the
-  // vertical longhand is preserved in px so the consumer can replace the
-  // `padding` shorthand wholesale. The consumer applies this only when
-  // the emitted style actually carries `padding`, so an over-eager entry
-  // here is inert.
-  if (pads && ctx.containingBlockWidth > 0) {
-    entry.paddingTop = formatPx(pads.t);
-    entry.paddingBottom = formatPx(pads.b);
-    entry.paddingLeft = liquidPercent(pads.l, ctx.containingBlockWidth);
-    entry.paddingRight = liquidPercent(pads.r, ctx.containingBlockWidth);
-  }
-
-  // This node's own horizontal (row) gap.
-  if (kind === "flex-row" && ownContentWidth > 0) {
-    const gap = rowGapPx(node, inferred);
-    if (gap !== undefined) {
-      entry.columnGap = liquidPercent(gap, ownContentWidth);
-      entry.rowGap = formatPx(gap);
-    }
-  }
-
-  // Page-root full-bleed directive.
-  if (ctx.isRoot && deps.rootKind === "page") {
-    entry.root = { maxWidth: formatPx(node.size.x), minHeight: formatPx(node.size.y) };
-  }
-
-  if (Object.keys(entry).length > 0) {
-    overlay.set(guidToString(node.guid), entry);
-  }
-
-  // Recurse into flow children only. Their width axis fluidises for
-  // flex-row / flex-column (and inset, which the emitter flows as a
-  // row); grid children keep their track sizing.
-  const flow = flowChildren(node, inferred, kind, baseChildren);
-  if (flow.length === 0 || ownContentWidth <= 0) {
-    return;
-  }
-  const childWidthFluid = kind === "flex-row" || kind === "flex-column";
-  for (const child of flow) {
-    walk(
-      child,
-      {
-        containingBlockWidth: ownContentWidth,
-        widthFluid: childWidthFluid,
-        widthSizing: childWidthSizing(kind, child),
-        isRoot: false,
-      },
-      deps,
-      overlay,
-    );
-  }
+  return styleProp(liquefyStyle(record, designWidth, role));
 }

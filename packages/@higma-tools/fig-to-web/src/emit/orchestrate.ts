@@ -38,6 +38,7 @@ import { serialize } from "../lib/html-tree/serialize";
 import type { HtmlNode } from "../lib/html-tree/types";
 import { createExternalCssRegistry, type ExternalCssRegistry } from "./style/strategy/external-css";
 import { createIconRegistry, type IconRegistry } from "./assets/icons";
+import type { LayoutSizing } from "./layout/sizing";
 
 const EXTERNAL_STYLESHEET_PATH = "styles.css";
 
@@ -298,30 +299,28 @@ function emitAppTsx(entries: readonly AppEntryDescriptor[]): EmitFile {
   const sorted = [...entries].sort((a, b) =>
     a.target.componentName.localeCompare(b.target.componentName),
   );
-  const importLines = sorted.map(({ target }) => {
-    const path = `./${target.filePath.replace(/\.tsx$/, "")}`;
-    return `import { ${target.componentName} } from ${JSON.stringify(path)};`;
-  });
   const entryLines = sorted.map(({ target, figmaSlug }) => {
     const figma = figmaSlug ? JSON.stringify(`./figma/${figmaSlug}.html`) : "undefined";
+    const react = JSON.stringify(`./pages/${target.canvasSlug}/${target.slug}/index.html`);
     const size = formatSizeLiteral(target);
-    return `  { id: ${JSON.stringify(target.componentName)}, label: ${JSON.stringify(target.node.name ?? target.componentName)}, Component: ${target.componentName}, figmaSrc: ${figma}, size: ${size} },`;
+    return `  { id: ${JSON.stringify(target.componentName)}, label: ${JSON.stringify(target.node.name ?? target.componentName)}, figmaSrc: ${figma}, reactSrc: ${react}, size: ${size} },`;
   });
   const code = [
     `/**`,
-    ` * @file Preview shell — Figma render (left, iframe) vs the`,
-    ` * generated React render (right). The two surfaces share the`,
-    ` * frame's authored width / height so any pixel offset shows up`,
-    ` * directly. Plain React state, no router dependency.`,
+    ` * @file Preview shell — Figma render (left) vs the generated React`,
+    ` * render (right), each in its own iframe. The React pane loads the`,
+    ` * standalone page so it has its OWN viewport: resizing that iframe`,
+    ` * (drag handle / presets) changes the \`1vw\` a liquid page scales`,
+    ` * against, so you can watch it shrink below the design width and`,
+    ` * centre (margin auto) above it. Plain React state, no router.`,
     ` */`,
     `import { useState } from "react";`,
-    ...importLines,
     ``,
     `type Entry = {`,
     `  id: string;`,
     `  label: string;`,
-    `  Component: () => React.ReactElement;`,
     `  figmaSrc: string | undefined;`,
+    `  reactSrc: string;`,
     `  size: { width: number; height: number } | undefined;`,
     `};`,
     ``,
@@ -335,13 +334,23 @@ function emitAppTsx(entries: readonly AppEntryDescriptor[]): EmitFile {
     `  const initial = entries[0]?.id;`,
     `  const [activeId, setActiveId] = useState<string | undefined>(initial);`,
     `  const [mode, setMode] = useState<ViewMode>("side");`,
+    `  const [viewportWidth, setViewportWidth] = useState<number | undefined>(undefined);`,
     `  const active = entries.find((e) => e.id === activeId) ?? entries[0];`,
     `  if (!active) {`,
     `    return <p style={{ padding: 32 }}>No pages generated.</p>;`,
     `  }`,
-    `  const ActiveComponent = active.Component;`,
     `  const stageSize = active.size ?? { width: 1024, height: 768 };`,
-    `  const stageStyle: React.CSSProperties = { width: stageSize.width, height: stageSize.height };`,
+    `  // The Figma render is the fixed-width reference. The React iframe is`,
+    `  // viewport-variable: because it is a separate document, its width`,
+    `  // IS the \`vw\` basis, so a liquid page scales to whatever width the`,
+    `  // iframe is sized to. Drag its right edge or pick a preset.`,
+    `  const effectiveWidth = viewportWidth ?? stageSize.width;`,
+    `  const presets = Array.from(new Set([375, 768, 1280, stageSize.width, 1920])).sort((a, b) => a - b);`,
+    `  const figmaStageStyle: React.CSSProperties = { width: stageSize.width, height: stageSize.height };`,
+    `  const reactStageStyle: React.CSSProperties = mode === "overlay"`,
+    `    ? { width: stageSize.width, height: stageSize.height }`,
+    `    : { width: effectiveWidth, height: stageSize.height, resize: "horizontal", overflow: "hidden" };`,
+    `  const frameStyle: React.CSSProperties = { width: "100%", height: "100%", border: 0, display: "block" };`,
     `  return (`,
     `    <div className="fig-preview-shell">`,
     `      <aside>`,
@@ -364,22 +373,29 @@ function emitAppTsx(entries: readonly AppEntryDescriptor[]): EmitFile {
     `          <button type="button" aria-current={mode === "side" ? "true" : undefined} onClick={() => setMode("side")}>Side by side</button>`,
     `          <button type="button" aria-current={mode === "overlay" ? "true" : undefined} onClick={() => setMode("overlay")}>Overlay</button>`,
     `        </div>`,
+    `        <h1 style={{ marginTop: 24 }}>Viewport</h1>`,
+    `        <div className="fig-preview-modes">`,
+    `          {presets.map((w) => (`,
+    `            <button key={w} type="button" aria-current={effectiveWidth === w ? "true" : undefined} onClick={() => setViewportWidth(w)}>{w === stageSize.width ? \`Design (\${w})\` : \`\${w}px\`}</button>`,
+    `          ))}`,
+    `        </div>`,
+    `        <p style={{ fontSize: 11, color: "#888", margin: "8px 16px", lineHeight: 1.4 }}>React iframe: {effectiveWidth}px. Drag its right edge to resize.</p>`,
     `      </aside>`,
     `      <main className={\`fig-preview-main fig-preview-main--\${mode}\`}>`,
     `        <section className="fig-preview-pane">`,
-    `          <header>Figma source</header>`,
-    `          <div className="fig-preview-stage" style={stageStyle}>`,
+    `          <header>Figma source · {stageSize.width}px</header>`,
+    `          <div className="fig-preview-stage" style={figmaStageStyle}>`,
     `            {active.figmaSrc ? (`,
-    `              <iframe title={\`Figma render of \${active.label}\`} src={active.figmaSrc} style={stageStyle} />`,
+    `              <iframe title={\`Figma render of \${active.label}\`} src={active.figmaSrc} style={figmaStageStyle} />`,
     `            ) : (`,
     `              <p style={{ padding: 24 }}>No Figma SVG available for this frame.</p>`,
     `            )}`,
     `          </div>`,
     `        </section>`,
     `        <section className="fig-preview-pane">`,
-    `          <header>React output</header>`,
-    `          <div className="fig-preview-stage" style={stageStyle}>`,
-    `            <ActiveComponent />`,
+    `          <header>React output · {effectiveWidth}px</header>`,
+    `          <div className="fig-preview-stage fig-preview-stage--react" style={reactStageStyle}>`,
+    `            <iframe title={\`React render of \${active.label}\`} src={active.reactSrc} style={frameStyle} />`,
     `          </div>`,
     `        </section>`,
     `      </main>`,
@@ -471,24 +487,9 @@ export type AssetStrategy = "inline" | "externalize-complex";
  */
 export type VariantStrategy = "discriminated" | "exploded";
 
-/**
- * Sizing regime applied to the *web-inferred* layout as a post-process.
- *
- * - `"fixed"` (default): every authored dimension is emitted as an
- *   absolute `px` length — the historical behaviour. The output is
- *   pixel-faithful at the frame's authored width but does not adapt
- *   to the viewport.
- * - `"liquid"`: a translation pass (see `emit/layout/liquid.ts`)
- *   re-expresses **horizontal** lengths (width, x-position, horizontal
- *   padding, horizontal gap) as percentages of their containing box so
- *   the page fluidly scales with the viewport up to the authored width.
- *   Vertical lengths stay `px`. The translation reuses the same fig
- *   context (`node.size` + the layout inference) the emitter consumes,
- *   so at the authored width the liquid render is identical to the
- *   fixed one. Selecting `"liquid"` is orthogonal to `cssMode` — the
- *   chosen CSS-delivery strategy runs downstream, unchanged.
- */
-export type LayoutSizing = "fixed" | "liquid";
+// `LayoutSizing` is imported (above) from the layout layer
+// (`layout/sizing.ts`), which owns the mode registry. The public API
+// re-exports it from there via the package entry points.
 
 /** Options controlling emission output. */
 export type EmitFromFramesOptions = {

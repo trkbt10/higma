@@ -36,9 +36,11 @@ import { buildPropBindings } from "../plan/prop-bindings";
 import { collectAuthoredTextOverridesByGuid } from "../plan/registry";
 import { buildReparentResult } from "../layout/reparent";
 import { applyRowClustering } from "../layout/cluster";
-import { buildLiquidOverlay, type LiquidOverlay } from "../layout/liquid";
+import { buildLiquidConfig } from "../layout/sizing";
+import { rewriteForLiquid, detokenizeSizingTokens } from "../layout/liquid";
 import { serialize as serializeJsx } from "../../lib/jsx-tree/serialize";
-import type { AssetStrategy, CssImportStrategy, CssMode, ExportStyle, LayoutSizing, VariantStrategy } from "../orchestrate";
+import type { AssetStrategy, CssImportStrategy, CssMode, ExportStyle, VariantStrategy } from "../orchestrate";
+import type { LayoutSizing } from "../layout/sizing";
 import type { IconRegistry } from "../assets/icons";
 import type { JsxNode } from "../../lib/jsx-tree/types";
 import {
@@ -153,53 +155,56 @@ function makeContext(
   opts: EmitOpts,
   propBindings: PropBindings,
   rootNode: FigNode,
-  rootKind: "page" | "component",
 ): EmitContext {
   const overrides = collectAuthoredTextOverridesByGuid(source, rootNode);
   const distinctCount = new Map<string, number>();
   for (const [key, values] of overrides) {
     distinctCount.set(key, values.size);
   }
-  // The reparent/cluster overlay must be built once and shared: the
-  // liquid pass reads children through the SAME overlay-aware reader the
-  // JSX emitter uses (`childrenOfEmitNode`), so both agree on the tree
-  // when computing percentages vs emitting px.
-  const reparent = buildLayoutOverlay(source, rootNode);
-  const childrenOf = (node: FigNode): readonly FigNode[] => {
-    const overlay = reparent.childrenByParent.get(guidToString(node.guid));
-    return overlay !== undefined ? overlay : source.document.childrenOf(node);
-  };
-  const liquidOverlay: LiquidOverlay =
-    opts.layoutSizing === "liquid"
-      ? buildLiquidOverlay(rootNode, {
-          childrenOf,
-          // `resolveContainerLayout` only consults these for
-          // `absorbBackgroundDecoration` (which reads childrenOf / index /
-          // imageResolver) and `inferLayout` (which reads neither), so the
-          // absorb-relevant inputs are sufficient to mirror the emitter's
-          // layout decision exactly.
-          styleInputs: { index, imageResolver: opts.imageResolver, childrenOf },
-          rootKind,
-        })
-      : new Map();
+  // In liquid mode, suppress size-bearing tokens so the emitter writes
+  // inline px the (per-page) liquid tree pass can scale; colour tokens
+  // stay. The shared `tokens.css` keeps fixed px that liquid cannot
+  // scale, so referencing size tokens there would leave text / spacing
+  // un-scaled (e.g. headings overflowing their shrunk boxes).
+  const emitIndex = opts.layoutSizing === "liquid" ? detokenizeSizingTokens(index) : index;
   return {
     source,
     registry,
-    index,
+    index: emitIndex,
     imageResolver: opts.imageResolver,
     emittingFile,
     emittingRootGuid: guidToString(rootNode.guid),
     imports: new Map(),
     debugAttrs: opts.debugAttrs,
     propBindings,
-    reparent,
+    reparent: buildLayoutOverlay(source, rootNode),
     iconRegistry: opts.iconRegistry,
     assetStrategy: opts.assetStrategy,
     assetComplexityThreshold: opts.assetComplexityThreshold,
     layoutSizing: opts.layoutSizing,
-    liquidOverlay,
+    designWidth: rootNode.size?.x,
     authoredTextOverrideDistinctValueCount: distinctCount,
   };
+}
+
+/**
+ * Run the liquid tree pass over a finished root subtree when the emit is
+ * in `"liquid"` mode, scaling every length against the root's authored
+ * width. A no-op in `"fixed"` mode. Applied to each emitted root (page,
+ * component, variant case) just before the CSS-delivery rewrite, so the
+ * delivery strategy packages the fluid `calc(...)` values.
+ */
+function liquefyRoot(
+  node: JsxNode,
+  rootNode: FigNode,
+  layoutSizing: LayoutSizing,
+  role: "page-root" | "component-root",
+): JsxNode {
+  const config = buildLiquidConfig(layoutSizing, rootNode);
+  if (config === undefined) {
+    return node;
+  }
+  return rewriteForLiquid(node, config.designWidth, role);
 }
 
 function renderImports(imports: ReadonlyMap<string, string>): string {
@@ -456,8 +461,8 @@ export function emitPageFile(
   // Pages have no typed component props — they are not bound to a
   // SYMBOL — so `EMPTY_BINDINGS` lets the JSX emitter render
   // hard-coded TEXT characters verbatim.
-  const context = makeContext(source, registry, index, target.filePath, opts, EMPTY_BINDINGS, target.node, "page");
-  const rawBodyNode = emitFrameJsx(target.node, context, "page-root");
+  const context = makeContext(source, registry, index, target.filePath, opts, EMPTY_BINDINGS, target.node);
+  const rawBodyNode = liquefyRoot(emitFrameJsx(target.node, context, "page-root"), target.node, opts.layoutSizing, "page-root");
   const strategy = createCssStrategy(target.componentName, opts);
   const bodyNode = strategy.rewrite(rawBodyNode);
   const cssModulesCollector = strategy.cssModulesCollector;
@@ -527,7 +532,12 @@ function emitVariantCase(
   // centered text against a rounded background. Reusing
   // `emitFrameJsx` keeps the variant case in lockstep with every
   // other "wrap a single root frame in a `<div>`" call site.
-  const rawFrameNode = emitFrameJsx(variantNode, context, "component-root");
+  const rawFrameNode = liquefyRoot(
+    emitFrameJsx(variantNode, context, "component-root"),
+    variantNode,
+    context.layoutSizing,
+    "component-root",
+  );
   // Every variant case threads through the SAME strategy rewriter so
   // the per-file `.module.css` (in css-modules mode) or run-wide
   // `styles.css` (in external-css mode) covers every variant branch.
@@ -797,7 +807,7 @@ export function emitComponentFile(
   // each TEXT node so a `componentPropRefs(TEXT_DATA)` slot reads
   // `{label}` instead of the SYMBOL-default literal.
   const bindings = buildPropBindings(target, source.document);
-  const context = makeContext(source, registry, index, target.filePath, opts, bindings, target.node, "component");
+  const context = makeContext(source, registry, index, target.filePath, opts, bindings, target.node);
   const isVariantSet = target.variants.size > 0;
 
   // Variant-set explosion: emit one standalone file per variant plus
@@ -854,7 +864,7 @@ export function emitComponentFile(
     return appendCssSidecar([tsxFile], target.filePath, strategy.cssModulesCollector);
   }
 
-  const rawBodyNode = emitFrameJsx(target.node, context, "component-root");
+  const rawBodyNode = liquefyRoot(emitFrameJsx(target.node, context, "component-root"), target.node, opts.layoutSizing, "component-root");
   const bodyNode = strategy.rewrite(rawBodyNode);
   const body = serializeJsx(bodyNode, { depth: JSX_BODY_DEPTH });
   const importsSrc = renderImports(context.imports);

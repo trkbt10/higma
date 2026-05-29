@@ -49,7 +49,7 @@ import {
   isRendered,
   resolveContainerLayout,
 } from "../layout/resolve";
-import type { LiquidOverlay, LiquidRootDirective } from "../layout/liquid";
+import { instanceScaleVar } from "../layout/liquid";
 import { collapseChain } from "../layout/collapse";
 import type { ReparentResult } from "../layout/reparent";
 import { guidToString } from "@higma-document-models/fig/domain";
@@ -58,7 +58,8 @@ import type { FigPaint } from "@higma-document-models/fig/types";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
 import { el, expr, exprProp, flagProp, strProp, styleProp, text } from "../../lib/jsx-tree/builder";
 import type { IconRegistry } from "../assets/icons";
-import type { AssetStrategy, LayoutSizing } from "../orchestrate";
+import type { AssetStrategy } from "../orchestrate";
+import type { LayoutSizing } from "../layout/sizing";
 import { complexityScore } from "@higma-document-renderers/fig/asset-plan";
 import { serializeSvgDocument } from "../style/strategy/svg-serialize";
 
@@ -146,20 +147,18 @@ export type EmitContext = {
   readonly reparent: ReparentResult;
   /**
    * Sizing regime for the inferred layout (`"fixed"` | `"liquid"`).
-   * Consulted by the page-root branch to decide whether to wrap the
-   * root in the liquid full-bleed shell. The per-node `px → %` rewrite
-   * is driven by {@link EmitContext.liquidOverlay}.
+   * Read by the per-file emitters to decide whether to run the liquid
+   * tree pass (`rewriteForLiquid`) over the finished JSX. The emit walk
+   * itself is mode-agnostic, except the INSTANCE wrapper consults this +
+   * {@link EmitContext.designWidth} to hand its component the right scale.
    */
   readonly layoutSizing: LayoutSizing;
   /**
-   * Per-node relative-sizing overrides produced by the liquid
-   * translation pass (`layout/liquid.ts`). Empty in `"fixed"` mode, so
-   * `computeStyle` is an identity pass and the emitted px is unchanged.
-   * In `"liquid"` mode an entry's `%` values are spliced onto the
-   * fixed-px style record and the page root carries a full-bleed
-   * directive.
+   * Authored width of the file's root frame (`undefined` when sizeless).
+   * In liquid mode an INSTANCE wrapper divides the referenced component's
+   * width by this to derive the component's `--lqd-down` scale unit.
    */
-  readonly liquidOverlay: LiquidOverlay;
+  readonly designWidth: number | undefined;
 };
 
 function styleInputsOf(context: EmitContext): StyleInputs {
@@ -192,11 +191,13 @@ function parentContextOf(options: EmitOptions): ParentContext | undefined {
 }
 
 /**
- * Compute a node's style record, then splice any liquid overlay entry
- * onto it. In `"fixed"` mode the overlay is empty so this is exactly
- * `nodeToStyle`. Funnelling every element emitter (container / text /
- * vector / instance) through one helper keeps the liquid `px → %`
- * rewrite in a single place.
+ * Compute a node's style record. A thin wrapper over `nodeToStyle` that
+ * supplies the shared `StyleInputs`, so every element emitter (container
+ * / text / vector / instance) goes through one call. The liquid `px →
+ * calc` rewrite is NOT applied here — it runs as a single tree pass
+ * (`rewriteForLiquid`) over the finished JSX in `render/files.ts`, so it
+ * also catches styles built off this path (text runs, INSTANCE override
+ * variables, structural images).
  */
 function computeStyle(
   node: FigNode,
@@ -208,138 +209,7 @@ function computeStyle(
   parentContext: ParentContext | undefined,
   paintZIndex: number | undefined,
 ): Record<string, string> {
-  const style = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, offsetBias, inferred, parentContext, paintZIndex);
-  return applyLiquidOverlay(node, style, context.liquidOverlay);
-}
-
-/**
- * Splice a liquid overlay entry onto a fixed-mode style record. Every
- * rewrite is guarded by the presence of the property the emitter
- * actually produced, so the pass can never *add* a dimension the fixed
- * emit omitted (which would shift the layout at the authored width):
- *
- *   - `width` is rewritten only when the emitter pinned an explicit px
- *     width (a FIXED flow child); a dropped / `auto` / `100%` width is
- *     left for CSS to resolve;
- *   - the `padding` shorthand is replaced with longhand (horizontal `%`,
- *     vertical px preserved) only when padding was emitted;
- *   - the `gap` shorthand becomes `column-gap` (`%`) + `row-gap` (px)
- *     only for a flex-row that emitted a gap.
- *
- * The page-root full-bleed directive (`entry.root`) is applied
- * separately by `emitContainerJsx`, not here.
- */
-function applyLiquidOverlay(
-  node: FigNode,
-  style: Record<string, string>,
-  overlay: LiquidOverlay,
-): Record<string, string> {
-  const entry = overlay.get(guidToString(node.guid));
-  if (!entry) {
-    return style;
-  }
-  const out: Record<string, string> = { ...style };
-  if (entry.width !== undefined && typeof out.width === "string" && out.width.endsWith("px")) {
-    out.width = entry.width;
-  }
-  if (entry.paddingLeft !== undefined && out.padding !== undefined) {
-    delete out.padding;
-    if (entry.paddingTop !== undefined) {
-      out.paddingTop = entry.paddingTop;
-    }
-    if (entry.paddingRight !== undefined) {
-      out.paddingRight = entry.paddingRight;
-    }
-    if (entry.paddingBottom !== undefined) {
-      out.paddingBottom = entry.paddingBottom;
-    }
-    out.paddingLeft = entry.paddingLeft;
-  }
-  if (entry.columnGap !== undefined && out.gap !== undefined) {
-    delete out.gap;
-    out.columnGap = entry.columnGap;
-    if (entry.rowGap !== undefined) {
-      out.rowGap = entry.rowGap;
-    }
-  }
-  return out;
-}
-
-/**
- * Style keys that paint (rather than lay out) — lifted onto the
- * full-bleed outer wrapper a liquid page root emits so the background
- * spans the viewport while the content column is capped and centred.
- */
-const ROOT_VISUAL_KEYS: ReadonlySet<string> = new Set([
-  "background",
-  "backgroundColor",
-  "backgroundImage",
-  "backgroundSize",
-  "backgroundPosition",
-  "backgroundRepeat",
-  "backgroundClip",
-  "boxShadow",
-  "opacity",
-  "filter",
-  "backdropFilter",
-  "border",
-  "borderRadius",
-  "outline",
-  "outlineOffset",
-  "mixBlendMode",
-]);
-
-/**
- * Partition a liquid page root's style into the full-bleed outer
- * wrapper (paint + `min-height`, `width: 100%`) and the capped, centred
- * inner content column (`max-width`, `margin: 0 auto`, layout). The
- * authored `width` / `height` are dropped — the directive replaces them
- * — so at the authored viewport width the outer is exactly the frame's
- * width and the render matches fixed mode.
- */
-function splitLiquidRoot(
-  style: Record<string, string>,
-  directive: LiquidRootDirective,
-): { readonly outer: Record<string, string>; readonly inner: Record<string, string> } {
-  const outer: Record<string, string> = { width: "100%", minHeight: directive.minHeight };
-  const inner: Record<string, string> = {
-    width: "100%",
-    maxWidth: directive.maxWidth,
-    marginLeft: "auto",
-    marginRight: "auto",
-  };
-  for (const [key, value] of Object.entries(style)) {
-    if (key === "width" || key === "height") {
-      continue;
-    }
-    if (ROOT_VISUAL_KEYS.has(key)) {
-      outer[key] = value;
-    } else {
-      inner[key] = value;
-    }
-  }
-  return { outer, inner };
-}
-
-/**
- * Wrap a liquid page root's content in the full-bleed outer / capped
- * inner pair. The semantic node's `data-fig-*` attributes and transform
- * stay on the inner content div; the outer carries only the background.
- */
-function wrapLiquidRoot(
-  style: Record<string, string>,
-  directive: LiquidRootDirective,
-  transform: string | undefined,
-  dataAttrs: readonly JsxProp[],
-  children: readonly JsxNode[],
-): JsxNode {
-  const { outer, inner } = splitLiquidRoot(style, directive);
-  const innerDiv = el("div", {
-    props: [...dataAttrs, styleAsProp(inner, transform)],
-    children,
-    layout: "block",
-  });
-  return el("div", { props: [styleProp(outer)], children: [innerDiv], layout: "block" });
+  return nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, offsetBias, inferred, parentContext, paintZIndex);
 }
 
 /**
@@ -849,16 +719,6 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
     paintZIndex: zIndexByGuid?.get(guidToString(child.guid)),
   }));
   const finalChildren = imageBody === undefined ? children : [imageBody, ...children];
-  // Liquid page root: wrap so the background bleeds full-width while the
-  // content column is capped at the authored width and centred. Only
-  // page roots carry a `root` directive (components embed fluidly), so
-  // this never fires for component roots or descendants.
-  const liquidRoot = rootMode === "page-root"
-    ? context.liquidOverlay.get(guidToString(node.guid))?.root
-    : undefined;
-  if (liquidRoot !== undefined) {
-    return wrapLiquidRoot(style, liquidRoot, transform, dataAttrs, finalChildren);
-  }
   return el("div", { props, children: finalChildren, layout: "block" });
 }
 
@@ -1419,6 +1279,16 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   // path so `wrapForScale`'s transformed wrapper still paints
   // outside its own bounds.
   applyInstanceClipIfTruncated(node, context, mergedWrapStyle);
+  // Liquid: hand the component subtree a scale unit derived from THIS
+  // scope's `--lqd` and the INSTANCE's footprint (`node.size.x`, the size
+  // the component is placed at — NOT the symbol's natural width), so the
+  // component fills its slot whether placed at natural size or resized.
+  // The component root reads `--lqd-down`; the wrapper's own position /
+  // size still scale by the inherited `--lqd`.
+  if (context.layoutSizing === "liquid" && context.designWidth !== undefined && context.designWidth > 0 && node.size) {
+    const scaleVar = instanceScaleVar(node.size.x, context.designWidth);
+    mergedWrapStyle[scaleVar.key] = scaleVar.value;
+  }
   const wrapStyleProp = styleAsProp(mergedWrapStyle, wrapTransform);
 
   const componentProps: JsxProp[] = [];
@@ -1986,6 +1856,12 @@ function wrapForScale(
   context: EmitContext,
   componentTag: JsxNode,
 ): JsxNode {
+  // In liquid mode the component already fills its slot via the
+  // `--lqd-down` unit (derived from the INSTANCE footprint), so a
+  // `transform: scale` here would shrink it a second time. Skip it.
+  if (context.layoutSizing === "liquid") {
+    return componentTag;
+  }
   const symbolSize = naturalSymbolSize(instance, context);
   if (!symbolSize || !instance.size) {
     return componentTag;

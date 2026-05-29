@@ -18,6 +18,6 @@ export type {
   EmitFromFramesOptions,
   EmitResult,
   ExportStyle,
-  LayoutSizing,
   VariantStrategy,
 } from "./orchestrate";
+export type { LayoutSizing } from "./layout/sizing";
