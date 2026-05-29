@@ -56,6 +56,7 @@ import {
   clampCornerRadius,
   cornerRadiusScalar,
   buildEllipseArcPathD,
+  buildInsideStrokeMiterCenterlineCommands,
   buildStrokeAlignedClosedPathCommands,
   buildStrokeGeometryBackedInsideStrokeCenterlineCommands,
   buildStrokeGeometryBackedOutsideStrokeCenterlineCommands,
@@ -1913,6 +1914,26 @@ function resolveInsideStrokeGeometryCenterlinePathContours(node: PathNode): read
   const contour = node.contours[0];
   if (contour.windingRule !== "nonzero" || contour.fillOverride !== undefined) {
     return undefined;
+  }
+  // Straight-edged polygons inset analytically with mitered corners,
+  // matching Figma's exported centerline exactly (a single mitered
+  // vertex per corner). The strokeGeometry-backed reconstruction below
+  // splits sharp corners into two unmitered endpoints, so prefer the
+  // analytic path whenever the contour has no curves. Skip nodes that
+  // carry rounded-corner metadata (`cornerRadius`): their corners are
+  // semantically rounded — a rounded-rect forwarded to the rect-shape
+  // stroke emitter, or a vertex-rounded polygon whose real contour has
+  // arc commands — so mitering them would flatten the rounding.
+  if (node.cornerRadius === undefined) {
+    const miterCenterlineCommands = buildInsideStrokeMiterCenterlineCommands(
+      contour.commands,
+      stroke.width / 2,
+    );
+    if (miterCenterlineCommands !== undefined) {
+      return [{
+        d: contourToSvgD({ commands: miterCenterlineCommands }, STROKE_GEOMETRY_CENTERLINE_PATH_PRECISION),
+      }];
+    }
   }
   const centerlineCommands = buildStrokeGeometryBackedInsideStrokeCenterlineCommands(
     contour.commands,

@@ -136,6 +136,73 @@ export function buildStrokeGeometryBackedInsideStrokeCenterlineCommands(
   return centerlineSegmentsToClosedPathCommands(rotateCenterlineSegmentsToTopEdge(centerlineSegments));
 }
 
+/**
+ * Centerline of an INSIDE stroke on a straight-edged closed polygon.
+ *
+ * For polygons whose every edge is a line, Figma's exported stroke
+ * centerline is exactly the source contour inset toward the interior
+ * by half the stroke width, with the (MITER-joined) corners landing on
+ * the intersection of the two adjacent inset edges. This is purely
+ * analytic and needs no precomputed strokeGeometry — and, unlike the
+ * geometry-backed reconstruction, it produces a single mitered vertex
+ * per corner instead of two split endpoints. Returns undefined for
+ * contours that contain curves (which need Figma's strokeGeometry to
+ * reproduce its exact offset curve) so the caller can fall back.
+ */
+export function buildInsideStrokeMiterCenterlineCommands(
+  commands: readonly PathCommand[],
+  halfWidth: number,
+): readonly PathCommand[] | undefined {
+  if (halfWidth <= 0) {
+    return undefined;
+  }
+  if (!isSingleClosedSubpath(commands)) {
+    return undefined;
+  }
+  const points = straightClosedSubpathVertices(commands);
+  if (points === undefined) {
+    return undefined;
+  }
+  const area = signedArea(points);
+  if (area === 0) {
+    return undefined;
+  }
+  const offsetLines = buildOffsetLines(points, halfWidth, area, -1);
+  const offsetPoints = points.map((_, index) => {
+    const previous = offsetLines[(index + offsetLines.length - 1) % offsetLines.length];
+    const current = offsetLines[index];
+    return intersectLines(previous, current) ?? current.a;
+  });
+  return pointsToClosedPathCommands(offsetPoints);
+}
+
+/**
+ * Extract the corner vertices of a single closed subpath built only
+ * from straight edges (M/L, optionally Z). Returns undefined if any
+ * curve command is present or fewer than three distinct vertices
+ * remain. A trailing vertex coincident with the first (explicit
+ * line-to-start close) is dropped.
+ */
+function straightClosedSubpathVertices(commands: readonly PathCommand[]): readonly Point[] | undefined {
+  const points: Point[] = [];
+  for (const command of commands) {
+    if (command.type === "Z") {
+      continue;
+    }
+    if (command.type !== "M" && command.type !== "L") {
+      return undefined;
+    }
+    points.push({ x: command.x, y: command.y });
+  }
+  if (points.length >= 2 && nearPoint(points[0], points[points.length - 1])) {
+    points.pop();
+  }
+  if (points.length < 3) {
+    return undefined;
+  }
+  return points;
+}
+
 function isSingleClosedSubpath(commands: readonly PathCommand[]): boolean {
   const moveCount = commands.filter((command) => command.type === "M").length;
   return moveCount === 1;
@@ -334,12 +401,21 @@ function signedArea(points: readonly Point[]): number {
   }, 0) / 2;
 }
 
+/**
+ * Offset each polygon edge perpendicular by `offsetDistance`.
+ *
+ * `side = 1` offsets toward the OUTSIDE of the (signed-area-oriented)
+ * polygon; `side = -1` offsets toward the INSIDE. The convention is
+ * fixed by the winding so that OUTSIDE strokes grow the shape and
+ * INSIDE strokes shrink it regardless of contour direction.
+ */
 function buildOffsetLines(
   points: readonly Point[],
   offsetDistance: number,
   area: number,
+  side: 1 | -1 = 1,
 ): readonly Line[] {
-  const direction = area > 0 ? 1 : -1;
+  const direction = (area > 0 ? 1 : -1) * side;
   return points.map((point, index) => {
     const next = points[(index + 1) % points.length];
     const dx = next.x - point.x;

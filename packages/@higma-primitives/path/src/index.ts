@@ -47,6 +47,7 @@ export {
   type CenterlineContour,
 } from "./stroke-centerline";
 export {
+  buildInsideStrokeMiterCenterlineCommands,
   buildStrokeAlignedClosedPathCommands,
   buildStrokeGeometryBackedInsideStrokeCenterlineCommands,
   buildStrokeGeometryBackedOutsideStrokeCenterlineCommands,
