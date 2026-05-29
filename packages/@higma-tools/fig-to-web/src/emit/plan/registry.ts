@@ -1168,6 +1168,33 @@ function registerInstanceTarget(
   });
 }
 
+/**
+ * Every ComponentTarget transitively referenced by `frame`.
+ *
+ * Walks the frame's INSTANCE descendants — descending into referenced
+ * SYMBOL bodies so nested components surface too (the same walk
+ * `buildRegistry` runs) — and maps each to its registry entry,
+ * deduplicated by file path. The `--serve` lazy preview uses this to
+ * emit exactly the component TSX a page's bundle imports, instead of
+ * eagerly writing every component in the document.
+ */
+export function collectReferencedComponentTargets(
+  source: FigDocumentContext,
+  registry: EmitRegistry,
+  frame: FigNode,
+): readonly ComponentTarget[] {
+  const instances: FigNode[] = [];
+  collectInstancesIn(frame, instances, source.document);
+  const byPath = new Map<string, ComponentTarget>();
+  for (const instance of instances) {
+    const target = componentTargetForInstance(source, registry, instance);
+    if (target) {
+      byPath.set(target.filePath, target);
+    }
+  }
+  return [...byPath.values()];
+}
+
 /** Resolve the component target for an INSTANCE node, or undefined when missing. */
 export function componentTargetForInstance(
   source: FigDocumentContext,

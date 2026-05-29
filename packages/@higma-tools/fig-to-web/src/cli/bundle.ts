@@ -84,11 +84,30 @@ function formatBuildLog(log: BunBuildLog): string {
  * Throws on build failures — the CLI surfaces the message to stderr.
  */
 export async function bundlePreview(outDir: string): Promise<void> {
+  const root = resolve(outDir);
+  const entrypoints = [resolve(root, "main.tsx"), ...await collectStandaloneEntries(root)];
+  await bundleEntrypoints(root, entrypoints);
+}
+
+/**
+ * Bundle a fixed set of entrypoints into `.js` siblings under `root`.
+ *
+ * Shared by the eager build path (`bundlePreview`, which bundles
+ * `main.tsx` + every standalone) and the `--serve` lazy preview, which
+ * bundles one frame's `standalone.tsx` on demand when its iframe is
+ * first opened. `root` is passed to `Bun.build` so each entry's `.js`
+ * lands beside its `.tsx` (preserving the `pages/<canvas>/<slug>/`
+ * layout) rather than flattening into `outDir`.
+ *
+ * Throws on build failure — the caller surfaces the message.
+ */
+export async function bundleEntrypoints(root: string, entrypoints: readonly string[]): Promise<void> {
   if (typeof Bun === "undefined" || typeof Bun.build !== "function") {
     throw new Error("fig-to-web --serve / preview bundling requires Bun (Bun.build). Run via `bun run`.");
   }
-  const root = resolve(outDir);
-  const entrypoints = [resolve(root, "main.tsx"), ...await collectStandaloneEntries(root)];
+  if (entrypoints.length === 0) {
+    return;
+  }
   // Bun.build can fail in two distinct ways:
   //   - It rejects with an Error (e.g. an unresolved module surfaces as a
   //     thrown `BuildMessage`). In that case `result` never binds.
@@ -99,7 +118,7 @@ export async function bundlePreview(outDir: string): Promise<void> {
   // Both paths must surface the underlying messages — silent "Bundle
   // failed" with no detail violated the no-fallback / fail-fast contract.
   const result = await runBunBuild({
-    entrypoints,
+    entrypoints: [...entrypoints],
     outdir: root,
     root,
     target: "browser",

@@ -26,8 +26,11 @@ import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import type { EmitFile, EmitRegistry, FrameTarget } from "./types";
 import { buildRegistry } from "./plan/registry";
 import { emitComponentFile, emitPageFile } from "./render/files";
+import type { EmitOpts } from "./render/files";
 import { buildTokensFromFrames, tokensToCss } from "../tokens";
+import type { TokenIndex } from "../tokens";
 import { createImageRegistry } from "./assets/images";
+import type { ImageRegistry } from "./assets/images";
 import { emitFigmaSvgForFrame } from "./figma-export/figma-svg";
 import { renderFontLinkNodes } from "./font-links";
 import { doctype, el, raw, text } from "../lib/html-tree/builder";
@@ -121,7 +124,7 @@ function emitIndexHtml(fontPlan: WebFontPlan): EmitFile {
  * actually needs, then turn that into a `WebFontPlan` whose Google
  * Fonts URL only requests those weights — never a 100..900 sweep.
  */
-function buildSourceFontPlan(source: FigDocumentContext, frames: readonly FigNode[]): WebFontPlan {
+export function buildSourceFontPlan(source: FigDocumentContext, frames: readonly FigNode[]): WebFontPlan {
   const { queries } = collectFontQueries({
     roots: frames,
     symbolResolver: source.symbolResolver,
@@ -202,7 +205,7 @@ function emitPreviewCss(): EmitFile {
  * the dual-pane dev shell (which exists for human comparison, not
  * automated diffing).
  */
-function emitStandaloneFiles(target: FrameTarget, fontPlan: WebFontPlan): readonly EmitFile[] {
+export function emitStandaloneFiles(target: FrameTarget, fontPlan: WebFontPlan): readonly EmitFile[] {
   const baseDir = `pages/${target.canvasSlug}/${target.slug}`;
   const htmlPath = `${baseDir}/index.html`;
   const entryPath = `${baseDir}/standalone.tsx`;
@@ -568,20 +571,43 @@ function resolveOptions(options: EmitFromFramesOptions): ResolvedEmitOptions {
 }
 
 /**
- * Drive the full emission for a fixed set of target frames.
+ * Shared, render-free state for an emit run.
  *
- * Returns the in-memory file set without touching disk; the caller
- * (CLI runtime or programmatic consumer) decides where to write.
+ * Holds everything derived from `(source, frames, options)` that does
+ * not itself produce output bytes: the resolved options, the global
+ * registry (whose name/path dedup MUST be computed once for the whole
+ * frame set so cross-page component imports resolve consistently), the
+ * token index + serialised `tokens.css`, the document-wide font plan,
+ * and the shared asset / CSS collectors threaded through every page
+ * and component emit.
  *
- * Async because the authoritative Figma SVG render emitted alongside
- * the React output (`emitFigmaSvgForFrame`) goes through the scene
- * graph builder, whose font / image decode steps are async.
+ * Both the eager `emitFromFrames` and the `--serve` lazy preview build
+ * one session up front, then call `emitPageFile` / `emitComponentFile`
+ * / `emitFigmaSvgForFrame` against it — the serve path simply does so
+ * per frame, on demand, instead of in a single pass.
  */
-export async function emitFromFrames(
+export type EmitSession = {
+  readonly resolved: ResolvedEmitOptions;
+  readonly registry: EmitRegistry;
+  readonly tokenIndex: TokenIndex;
+  /** Serialised `tokens.css` — `{ path: "tokens.css", contents }`. */
+  readonly tokensFile: EmitFile;
+  readonly fontPlan: WebFontPlan;
+  readonly imageRegistry: ImageRegistry;
+  readonly externalCssRegistry: ExternalCssRegistry | undefined;
+  readonly iconRegistry: IconRegistry | undefined;
+  readonly opts: EmitOpts;
+};
+
+/**
+ * Build the shared emit session (see {@link EmitSession}). Pure setup —
+ * no output files, no SVG render, no bundling.
+ */
+export function createEmitSession(
   source: FigDocumentContext,
   frames: readonly FigNode[],
   options: EmitFromFramesOptions = {},
-): Promise<EmitResult> {
+): EmitSession {
   const resolved = resolveOptions(options);
   const tokens = emitTokensFile(source, frames);
   const registry = buildRegistry(source, frames);
@@ -599,7 +625,7 @@ export async function emitFromFrames(
   // EmitContext branch that consults it short-circuits cleanly.
   const iconRegistry: IconRegistry | undefined =
     resolved.assetStrategy === "externalize-complex" ? createIconRegistry() : undefined;
-  const opts = {
+  const opts: EmitOpts = {
     debugAttrs: resolved.debugAttrs,
     exportStyle: resolved.exportStyle,
     cssMode: resolved.cssMode,
@@ -612,16 +638,46 @@ export async function emitFromFrames(
     externalStylesheetPath: EXTERNAL_STYLESHEET_PATH,
     iconRegistry,
   };
+  return {
+    resolved,
+    registry,
+    tokenIndex: tokens.registryInputs.index,
+    tokensFile: tokens.file,
+    fontPlan: buildSourceFontPlan(source, frames),
+    imageRegistry,
+    externalCssRegistry,
+    iconRegistry,
+    opts,
+  };
+}
 
-  const files: EmitFile[] = [tokens.file];
+/**
+ * Drive the full emission for a fixed set of target frames.
+ *
+ * Returns the in-memory file set without touching disk; the caller
+ * (CLI runtime or programmatic consumer) decides where to write.
+ *
+ * Async because the authoritative Figma SVG render emitted alongside
+ * the React output (`emitFigmaSvgForFrame`) goes through the scene
+ * graph builder, whose font / image decode steps are async.
+ */
+export async function emitFromFrames(
+  source: FigDocumentContext,
+  frames: readonly FigNode[],
+  options: EmitFromFramesOptions = {},
+): Promise<EmitResult> {
+  const session = createEmitSession(source, frames, options);
+  const { registry, opts, fontPlan, imageRegistry, externalCssRegistry, iconRegistry } = session;
+
+  const files: EmitFile[] = [session.tokensFile];
 
   for (const target of registry.frames.values()) {
-    for (const file of emitPageFile(source, registry, tokens.registryInputs.index, target, opts)) {
+    for (const file of emitPageFile(source, registry, session.tokenIndex, target, opts)) {
       files.push(file);
     }
   }
   for (const target of registry.components.values()) {
-    for (const file of emitComponentFile(source, registry, tokens.registryInputs.index, target, opts)) {
+    for (const file of emitComponentFile(source, registry, session.tokenIndex, target, opts)) {
       files.push(file);
     }
   }
@@ -637,7 +693,6 @@ export async function emitFromFrames(
     }
   }
 
-  const fontPlan = buildSourceFontPlan(source, frames);
   const figmaPairs = await Promise.all(
     [...registry.frames.values()].map(async (target) => ({
       target,

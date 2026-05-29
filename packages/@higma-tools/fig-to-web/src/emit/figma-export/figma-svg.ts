@@ -50,9 +50,36 @@ export async function emitFigmaSvgForFrame(
   target: FrameTarget,
   fontPlan: WebFontPlan,
 ): Promise<FigmaSvgFiles> {
+  const svgString = await renderFrameSvg(source, target);
+  const slug = svgSlugFor(target);
+  const svgPath = `figma/${slug}.svg`;
+  const htmlPath = `figma/${slug}.html`;
+  return {
+    svg: { path: svgPath, contents: svgString },
+    html: { path: htmlPath, contents: htmlDocFor(svgString, fontPlan) },
+    slug,
+  };
+}
+
+/**
+ * Render one frame to authoritative Figma SVG markup and return the raw
+ * `<svg>` string.
+ *
+ * This is the SoT render the build pipeline wraps for iframe embedding
+ * (`emitFigmaSvgForFrame`) and that the `--serve` preview drops inline
+ * directly into its shell document. The SVG carries its own viewBox and
+ * fully-resolved paint values, so the only host requirement is that the
+ * document embedding it links the same web fonts the source uses —
+ * otherwise every `<text>` layer falls back to the browser's default
+ * serif and the comparison against the React render becomes meaningless.
+ */
+export async function renderFrameSvg(
+  source: FigDocumentContext,
+  target: FrameTarget,
+): Promise<string> {
   const node = target.node;
   if (!node.size) {
-    throw new Error(`emitFigmaSvgForFrame: frame "${target.node.name ?? target.componentName}" has no size`);
+    throw new Error(`renderFrameSvg: frame "${target.node.name ?? target.componentName}" has no size`);
   }
   // The renderer's text path needs OS-resolved font metrics whenever
   // the .fig itself does not embed them via `derivedTextData`.
@@ -102,18 +129,15 @@ export async function emitFigmaSvgForFrame(
     // has not made the choice).
     exportSettings: { colorProfile: "SRGB" },
   });
-  const svgString = String(result.svg);
-  const slug = svgSlugFor(target);
-  const svgPath = `figma/${slug}.svg`;
-  const htmlPath = `figma/${slug}.html`;
-  return {
-    svg: { path: svgPath, contents: svgString },
-    html: { path: htmlPath, contents: htmlDocFor(svgString, fontPlan) },
-    slug,
-  };
+  return String(result.svg);
 }
 
-function svgSlugFor(target: FrameTarget): string {
+/**
+ * Slug the preview shell / standalone routing uses to reference a
+ * frame's authoritative SVG. Derived from the frame's page file path so
+ * the value stays stable across emit and serve.
+ */
+export function svgSlugFor(target: FrameTarget): string {
   return target.filePath
     .replace(/^pages\//, "")
     .replace(/\.tsx$/, "")

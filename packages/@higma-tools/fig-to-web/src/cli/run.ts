@@ -15,7 +15,7 @@ import { createFigDocumentContext, findCanvas, type FigDocumentContext } from "@
 import { emitFromFrames, listFrameTargets, pickFrameByName } from "../emit";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { bundlePreview } from "./bundle";
-import { startStaticServer } from "./serve";
+import { startPreviewServer } from "./preview-server";
 
 export type CliConsole = {
   readonly info: (message: string) => void;
@@ -75,6 +75,22 @@ export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_C
     return;
   }
 
+  if (options.serve) {
+    // Lazy preview: start immediately and produce each frame's React
+    // bundle + authoritative SVG the first time its page is opened, so
+    // startup no longer pays the per-frame render/bundle cost up front.
+    // The build-to-disk path below is the eager one used by the
+    // verifier and any consumer that wants the full tree on disk.
+    output.info(`Starting preview server (frames generate on first open) …`);
+    const handle = await startPreviewServer({ source, frames, options, output });
+    output.info(`Preview running at http://localhost:${handle.port}/`);
+    output.info(`Press Ctrl-C to stop.`);
+    await new Promise(() => {
+      // Block forever — Bun.serve keeps the event loop alive; stop on SIGINT.
+    });
+    return;
+  }
+
   output.info(`Emitting ${frames.length} frame${frames.length === 1 ? "" : "s"} → ${options.out}`);
   const result = await emitFromFrames(source, frames, {
     debugAttrs: options.debugAttrs,
@@ -106,13 +122,4 @@ export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_C
   }
 
   output.info(`Done — ${result.files.length} source file${result.files.length === 1 ? "" : "s"} written.`);
-
-  if (options.serve) {
-    const handle = await startStaticServer(options.out, options.port);
-    output.info(`Preview running at http://localhost:${handle.port}/`);
-    output.info(`Press Ctrl-C to stop.`);
-    await new Promise(() => {
-      // Block forever — Bun.serve keeps the event loop alive; stop on SIGINT.
-    });
-  }
 }

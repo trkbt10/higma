@@ -3,8 +3,14 @@
  */
 export type { ComponentTarget, EmitFile, EmitRegistry, FrameTarget } from "./types";
 export { listFrameTargets, pickFrameByName } from "./plan/targets";
-export { buildRegistry, componentTargetForInstance, variantValueForInstance } from "./plan/registry";
-export { emitFromFrames } from "./orchestrate";
+export {
+  buildRegistry,
+  collectReferencedComponentTargets,
+  componentTargetForInstance,
+  variantValueForInstance,
+} from "./plan/registry";
+export { createEmitSession, emitFromFrames, emitStandaloneFiles } from "./orchestrate";
+export type { EmitSession } from "./orchestrate";
 export type {
   AssetStrategy,
   CssImportStrategy,
