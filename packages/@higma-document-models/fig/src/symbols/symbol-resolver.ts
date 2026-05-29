@@ -835,6 +835,24 @@ function cleanupStaleDerivedTextData(
     return [...s].length;
   }
 
+  function countLineBreakCodePoints(s: string): number {
+    // Hard line breaks carry a codepoint in `characters` but produce no
+    // glyph in `derivedTextData.glyphs` (Figma lays the run onto a new
+    // baseline instead of drawing the separator). Count them so a glyph
+    // total of `codepoints − lineBreaks` is recognised as a match rather
+    // than a "gross mismatch" that discards otherwise-valid baked glyphs.
+    let count = 0;
+    for (const ch of s) {
+      const cp = ch.codePointAt(0);
+      // LF, CR, LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029).
+      // Regular spaces are excluded — they advance and carry a glyph.
+      if (cp === 0x0a || cp === 0x0d || cp === 0x2028 || cp === 0x2029) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   function derivedMatchesCharacters(
     dtd: FigDerivedTextData | undefined,
     characters: string | undefined,
@@ -847,7 +865,13 @@ function cleanupStaleDerivedTextData(
       return true;
     }
     const glyphs = dtd.glyphs;
-    return Array.isArray(glyphs) && glyphs.length === cpCount;
+    if (!Array.isArray(glyphs)) {
+      return false;
+    }
+    // A multi-line run bakes one glyph per non-separator codepoint, so the
+    // glyph total trails the codepoint count by the number of hard line
+    // breaks. Accept either the exact count or the line-break-adjusted one.
+    return glyphs.length === cpCount || glyphs.length === cpCount - countLineBreakCodePoints(characters);
   }
 
   function derivedLinesMatch(
