@@ -334,6 +334,27 @@ export function createKiwiSceneGraphPipeline(): KiwiSceneGraphPipeline {
         viewportWidth,
         viewportHeight,
       };
+      // Viewport-only fast path: when the document content (sourceRevision +
+      // document reference) and page/font/hidden inputs are unchanged and only
+      // the viewport/canvas geometry differs (pan or zoom), the built tree is
+      // viewport-independent, so reuse it with a stable `root` and swap only
+      // the viewport metadata. This keeps `scene.root` identity-stable across
+      // pan AND zoom, which the renderer's render-tree cache and settled-frame
+      // cache rely on to avoid a full re-resolve/re-render per gesture step.
+      const cachedForViewport = cacheRef.value;
+      if (
+        cachedForViewport !== undefined &&
+        cachedForViewport.sourceRevision === sourceRevision &&
+        cachedForViewport.sourceDocumentReference === sourceDocumentReference &&
+        cachedForViewport.pageGuidKey === pageGuidKey &&
+        cachedForViewport.textFontResolver === textFontResolver &&
+        cachedForViewport.showHiddenNodes === showHiddenNodes
+      ) {
+        const sceneGraph = sceneGraphWithCurrentViewport(cachedForViewport.sceneGraph, geometry, sourceRevision);
+        cacheRef.value = { ...cachedForViewport, sceneGraph };
+        return sceneGraph;
+      }
+
       const previous = resolvePreviousSceneGraphCache({
         previous: cacheRef.value,
         pageGuidKey,

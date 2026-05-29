@@ -453,7 +453,14 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const selectedBounds = useMemo(() => {
     const dragState = drag ?? IDLE_DRAG;
     const result: EditorCanvasItemBounds[] = [];
+    // A node can only be selected once, so each id yields at most one selection
+    // box. Guard against a duplicate id (e.g. a transient store snapshot during
+    // a concurrent render) so the rendered list keeps unique React keys and
+    // never triggers a "two children with the same key" reconciliation fault.
+    const seen = new Set<string>();
     for (const id of selectedIds) {
+      if (seen.has(id)) {continue;}
+      seen.add(id);
       const b = itemBounds.find((ib) => ib.id === id);
       if (!b) {continue;}
       const preview = applyDragPreview(id, { ...b, rotation: b.rotation ?? 0 }, dragState);

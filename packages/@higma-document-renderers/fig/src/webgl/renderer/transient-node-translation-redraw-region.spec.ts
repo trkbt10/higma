@@ -3,6 +3,7 @@
 import { createNodeId, type Effect, type RectNode } from "@higma-document-renderers/fig/scene-graph";
 import type { RenderGroupNode, RenderRectNode } from "../../scene-graph";
 import {
+  resolveContentEditRedrawRegion,
   resolveTransientNodeTranslationRedrawRegion,
   resolveTransientNodeTranslationRedrawViewport,
   type TransientNodeTranslationRedrawRegion,
@@ -132,6 +133,71 @@ describe("resolveTransientNodeTranslationRedrawRegion", () => {
       viewportTransform: IDENTITY,
       viewport: { x: 0, y: 0, width: 300, height: 200 },
       translation: { nodeId: createNodeId("target"), dx: 30, dy: 0 },
+    })).toBeNull();
+  });
+});
+
+function rectNodeSized(id: string, x: number, y: number, width: number, height: number): RenderRectNode {
+  const base = rectNode(id, x, y);
+  return {
+    ...base,
+    width,
+    height,
+    source: { ...base.source, width, height },
+  };
+}
+
+describe("resolveContentEditRedrawRegion", () => {
+  it("returns the changed node's output region for an in-place edit", () => {
+    const tree = [rectNode("a", 10, 20), rectNode("b", 400, 400)];
+    expect(resolveContentEditRedrawRegion({
+      previousChildren: tree,
+      currentChildren: tree,
+      changedNodeIds: [createNodeId("a")],
+      viewportTransform: IDENTITY,
+      viewport: { x: 0, y: 0, width: 1000, height: 1000 },
+    })).toEqual({ redrawViewport: { x: 10, y: 20, width: 100, height: 50 } });
+  });
+
+  it("unions the old and new extents for a bounds-changing edit", () => {
+    expect(resolveContentEditRedrawRegion({
+      previousChildren: [rectNodeSized("a", 10, 20, 100, 50)],
+      currentChildren: [rectNodeSized("a", 10, 20, 300, 200)],
+      changedNodeIds: [createNodeId("a")],
+      viewportTransform: IDENTITY,
+      viewport: { x: 0, y: 0, width: 1000, height: 1000 },
+    })).toEqual({ redrawViewport: { x: 10, y: 20, width: 300, height: 200 } });
+  });
+
+  it("reports no on-screen redraw when the changed node is fully off-screen", () => {
+    const tree = [rectNode("a", 5000, 5000)];
+    expect(resolveContentEditRedrawRegion({
+      previousChildren: tree,
+      currentChildren: tree,
+      changedNodeIds: [createNodeId("a")],
+      viewportTransform: IDENTITY,
+      viewport: { x: 0, y: 0, width: 1000, height: 1000 },
+    })).toEqual({ redrawViewport: null });
+  });
+
+  it("falls back (null) when a changed node is absent from a tree", () => {
+    expect(resolveContentEditRedrawRegion({
+      previousChildren: [rectNode("a", 10, 20)],
+      currentChildren: [rectNode("b", 10, 20)],
+      changedNodeIds: [createNodeId("a")],
+      viewportTransform: IDENTITY,
+      viewport: { x: 0, y: 0, width: 1000, height: 1000 },
+    })).toBeNull();
+  });
+
+  it("returns null for an empty changed-node set", () => {
+    const tree = [rectNode("a", 10, 20)];
+    expect(resolveContentEditRedrawRegion({
+      previousChildren: tree,
+      currentChildren: tree,
+      changedNodeIds: [],
+      viewportTransform: IDENTITY,
+      viewport: { x: 0, y: 0, width: 1000, height: 1000 },
     })).toBeNull();
   });
 });

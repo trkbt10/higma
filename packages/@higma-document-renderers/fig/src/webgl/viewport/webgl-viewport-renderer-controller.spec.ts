@@ -89,11 +89,10 @@ function scene(child: RectNode, version: number): SceneGraph {
 }
 
 describe("resolveWebGLViewportRenderSchedulingDecision", () => {
-  it("records settled frame reason for non-viewport-motion input", () => {
+  it("records settled frame reason for non-motion, non-interaction input", () => {
     expect(resolveWebGLViewportRenderSchedulingDecision({
       viewportMotionRender: false,
       sceneGraphInteractionRender: false,
-      viewportInteractionActive: false,
       sceneGraphInteractionActive: false,
     })).toEqual({
       frameReason: "settled",
@@ -101,15 +100,14 @@ describe("resolveWebGLViewportRenderSchedulingDecision", () => {
     });
   });
 
-  it("records viewport-motion frame reason only while viewport input is active", () => {
+  it("records viewport-motion and defers a settled render whenever the viewport moved", () => {
     expect(resolveWebGLViewportRenderSchedulingDecision({
       viewportMotionRender: true,
       sceneGraphInteractionRender: false,
-      viewportInteractionActive: true,
       sceneGraphInteractionActive: false,
     })).toEqual({
       frameReason: "viewport-motion",
-      scheduleSettledAfterViewportMotion: false,
+      scheduleSettledAfterViewportMotion: true,
     });
   });
 
@@ -117,7 +115,6 @@ describe("resolveWebGLViewportRenderSchedulingDecision", () => {
     expect(resolveWebGLViewportRenderSchedulingDecision({
       viewportMotionRender: false,
       sceneGraphInteractionRender: true,
-      viewportInteractionActive: false,
       sceneGraphInteractionActive: true,
     })).toEqual({
       frameReason: "scene-graph-interaction",
@@ -125,11 +122,21 @@ describe("resolveWebGLViewportRenderSchedulingDecision", () => {
     });
   });
 
-  it("records settled frame reason as soon as viewport input is no longer active", () => {
+  it("prefers an active scene graph interaction over a coincident viewport motion", () => {
     expect(resolveWebGLViewportRenderSchedulingDecision({
       viewportMotionRender: true,
-      sceneGraphInteractionRender: false,
-      viewportInteractionActive: false,
+      sceneGraphInteractionRender: true,
+      sceneGraphInteractionActive: true,
+    })).toEqual({
+      frameReason: "scene-graph-interaction",
+      scheduleSettledAfterViewportMotion: false,
+    });
+  });
+
+  it("falls back to settled when a scene graph interaction render is not active", () => {
+    expect(resolveWebGLViewportRenderSchedulingDecision({
+      viewportMotionRender: false,
+      sceneGraphInteractionRender: true,
       sceneGraphInteractionActive: false,
     })).toEqual({
       frameReason: "settled",

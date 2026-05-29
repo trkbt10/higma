@@ -3,7 +3,9 @@ import {
   boundsIntersect,
   boundsUnion,
   resolveRenderNodeOutputBoundsAffectedByTranslatedNode,
+  type RenderNodeTranslatedOutputBounds,
   type SceneGraphNodeTranslation,
+  type SceneNodeId,
   type Bounds,
   type ViewportRect,
 } from "@higma-document-renderers/fig/scene-graph";
@@ -79,6 +81,83 @@ export function resolveTransientNodeTranslationRedrawViewport({
     return null;
   }
   return boundsToViewportRect(regions.reduce(boundsUnion));
+}
+
+export type ContentEditRedrawRegion = {
+  /** Null when the changed nodes are entirely off-screen (cached frame already correct). */
+  readonly redrawViewport: ViewportRect | null;
+};
+
+function affectedOutputBoundsList(affected: RenderNodeTranslatedOutputBounds): readonly Bounds[] {
+  return [
+    affected.previousTargetOutputBounds,
+    affected.translatedTargetOutputBounds,
+    ...affected.ancestorCompositedOutputBounds,
+    ...affected.backdropDependentOutputBounds,
+  ];
+}
+
+/**
+ * Resolve the on-screen region that must be repainted after one or more nodes'
+ * content changed in place (a committed edit). Reuses the translated-node
+ * coverage SoT with a zero displacement: `previous`/`translated` target bounds
+ * collapse to the node's current output bounds, while the ancestor-composited
+ * and backdrop-dependent bounds (effects, group opacity, blend, background blur,
+ * masks) are still included so anything whose pixels depend on the changed node
+ * is repainted. Bounds are unioned across the previous and current render trees
+ * so a bounds-changing edit (resize) does not leave stale pixels.
+ *
+ * Returns `null` when the region cannot be determined safely (a changed node is
+ * absent from either tree — added/removed), so the caller falls back to a full
+ * settled render.
+ */
+export function resolveContentEditRedrawRegion({
+  previousChildren,
+  currentChildren,
+  changedNodeIds,
+  viewportTransform,
+  viewport,
+}: {
+  readonly previousChildren: readonly RenderNode[];
+  readonly currentChildren: readonly RenderNode[];
+  readonly changedNodeIds: readonly SceneNodeId[];
+  readonly viewportTransform: AffineMatrix;
+  readonly viewport: ViewportRect;
+}): ContentEditRedrawRegion | null {
+  if (changedNodeIds.length === 0) {
+    return null;
+  }
+  const collected: Bounds[] = [];
+  for (const nodeId of changedNodeIds) {
+    const translation: SceneGraphNodeTranslation = { nodeId, dx: 0, dy: 0 };
+    const previous = resolveRenderNodeOutputBoundsAffectedByTranslatedNode({
+      children: previousChildren,
+      outputTransform: viewportTransform,
+      translation,
+    });
+    const current = resolveRenderNodeOutputBoundsAffectedByTranslatedNode({
+      children: currentChildren,
+      outputTransform: viewportTransform,
+      translation,
+    });
+    if (previous === null || current === null) {
+      return null;
+    }
+    collected.push(...affectedOutputBoundsList(previous), ...affectedOutputBoundsList(current));
+  }
+  if (collected.length === 0) {
+    return null;
+  }
+  const totalBounds = collected.reduce(boundsUnion);
+  const visibleBounds = viewportBounds(viewport);
+  if (!boundsIntersect(totalBounds, visibleBounds)) {
+    return { redrawViewport: null };
+  }
+  const clippedRedrawBounds = intersectBounds(totalBounds, visibleBounds);
+  if (clippedRedrawBounds === null) {
+    throw new Error("Content edit redraw region lost viewport intersection after boundsIntersect");
+  }
+  return { redrawViewport: boundsToViewportRect(clippedRedrawBounds) };
 }
 
 /** Resolve the redraw region affected by one transient node translation. */

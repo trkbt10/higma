@@ -27,7 +27,7 @@
  * ```
  */
 
-import type { SceneGraph, Fill, Color, Effect, PathContour, ClipShape, SceneGraphNodeTranslation } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph, Fill, Color, Effect, PathContour, ClipShape, SceneGraphNodeTranslation, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
 import { translateSceneNodeTransform } from "@higma-document-renderers/fig/scene-graph";
 import { renderShapeEffectStack, resolveBrowserRenderedFigmaExportCssBlendMode, resolveFigmaRenderExportSettings, requireManagedImageColorProfile, type FigmaRenderExportSettings, type ResolvedEffectStack, type ResolvedFigmaRenderExportSettings, type ResolvedFillDef, } from "../../scene-graph";
 
@@ -90,12 +90,14 @@ import {
   type WebGLNodeEffectRenderPlan,
 } from "./node-effect-render-plan";
 import {
+  resolveContentEditRedrawRegion,
   resolveTransientNodeTranslationRedrawRegion,
   resolveTransientNodeTranslationRedrawViewport,
   type TransientNodeTranslationRedrawRegion,
 } from "./transient-node-translation-redraw-region";
 import {
   resolveViewportMotionRedrawRegion,
+  resolveScaledViewportMotionRedrawRegion,
   type ViewportMotionRedrawRegion,
   type ViewportMotionSceneViewport,
 } from "./viewport-motion-redraw-region";
@@ -193,6 +195,19 @@ export type WebGLFigmaRendererMetrics = {
   readonly settledRenderCount: number;
   readonly lastSettledRenderMs: number;
   readonly viewportMotionRenderCount: number;
+  /**
+   * Count of viewport-motion frames presented as a lossy scaled blit of the
+   * cached settled frame (zoom-in-progress), bypassing the full effect
+   * traversal. A deferred settled render restores fidelity once the gesture
+   * settles.
+   */
+  readonly viewportMotionScaledBlitCount: number;
+  /**
+   * Count of committed edits presented by repainting only the changed nodes'
+   * affected region over the cached settled frame, instead of a full settled
+   * re-render of the visible scene.
+   */
+  readonly committedContentRegionRedrawCount: number;
   readonly lastViewportMotionRenderMs: number;
   readonly lastViewportMotionRenderedNodeCount: number;
   readonly lastViewportMotionEffectNodeCount: number;
@@ -225,6 +240,13 @@ type WebGLRenderableNodeEffectPlan = {
 export type WebGLRenderFrameOptions = {
   readonly frameReason: WebGLRenderFrameReason;
   readonly transientNodeTranslation?: SceneGraphNodeTranslation;
+  /**
+   * SceneNode ids whose content changed in this committed mutation. When the
+   * previous frame is a settled frame at the same viewport, the renderer
+   * repaints only the affected region (including effect/backdrop bleed) over
+   * the cached pixels instead of re-rendering the whole visible scene.
+   */
+  readonly changedNodeIds?: readonly SceneNodeId[];
 };
 
 type WebGLSettledFrameCache = {
@@ -237,6 +259,7 @@ type WebGLSettledFrameCache = {
 
 type WebGLDefaultFramebufferSettledFrame = {
   readonly scene: SceneGraph;
+  readonly renderTree: RenderTree;
   readonly pixelRatio: number;
   readonly canvasWidth: number;
   readonly canvasHeight: number;
@@ -421,6 +444,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     settledRenderCount: 0,
     lastSettledRenderMs: 0,
     viewportMotionRenderCount: 0,
+    viewportMotionScaledBlitCount: 0,
+    committedContentRegionRedrawCount: 0,
     lastViewportMotionRenderMs: 0,
     lastViewportMotionRenderedNodeCount: 0,
     lastViewportMotionEffectNodeCount: 0,
@@ -546,9 +571,18 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function invalidateStateAfterRawEffectRendererCall(): void {
+    // Effect passes make raw GL calls, so the GL-state cache and the bound
+    // array buffer are stale and must be invalidated.
     glState.invalidate();
     vertexBuffers.invalidateArrayBufferBinding();
-    invalidateClipStencilState();
+    // The clip stencil only needs its GL state re-asserted, NOT a full rebuild:
+    // effect passes write their own offscreen FBO stencils and blit to the
+    // default framebuffer with stencil writes disabled, so the default
+    // framebuffer's clip-stencil *contents* are preserved. Keeping
+    // clipStencilValid + activeStencilClipEntries lets the next draw take the
+    // fast path in flushClipStencilIfRebuildNeeded (re-assert stencil GL state,
+    // reuse the preserved contents) instead of re-tessellating the clip stack.
+    markClipStencilNeedsRebuild();
   }
 
   type StencilFillRule = WebGLPathFillRule;
@@ -781,6 +815,29 @@ type WebGLRendererVisibilityViewportCache = {
   function invalidateClipStencilState(): void {
     clipStencilValid.value = false;
     activeStencilClipEntries.value = null;
+    markClipStencilNeedsRebuild();
+  }
+
+  type ClipStencilContents = {
+    readonly valid: boolean;
+    readonly entries: readonly StencilClipEntry[] | null;
+  };
+
+  /**
+   * Snapshot the default-framebuffer clip-stencil validity so it can be
+   * restored after an offscreen layer capture. Layer captures render their
+   * children into an offscreen FBO (with that FBO's own stencil), so the
+   * default framebuffer's clip-stencil contents are untouched — restoring the
+   * saved validity lets the next default-framebuffer draw reuse them via the
+   * fast path instead of re-tessellating the whole clip stack.
+   */
+  function saveClipStencilContents(): ClipStencilContents {
+    return { valid: clipStencilValid.value, entries: activeStencilClipEntries.value };
+  }
+
+  function restoreClipStencilContents(saved: ClipStencilContents): void {
+    clipStencilValid.value = saved.valid;
+    activeStencilClipEntries.value = saved.entries;
     markClipStencilNeedsRebuild();
   }
 
@@ -1453,9 +1510,10 @@ type WebGLRendererVisibilityViewportCache = {
     forgetPreviousTransientNodeTranslationFrame();
   }
 
-  function rememberDefaultFramebufferSettledFrame(scene: SceneGraph): void {
+  function rememberDefaultFramebufferSettledFrame(scene: SceneGraph, renderTree: RenderTree): void {
     defaultFramebufferSettledFrame.value = {
       scene,
+      renderTree,
       pixelRatio: pixelRatioRef.value,
       canvasWidth: canvasBackingWidth(),
       canvasHeight: canvasBackingHeight(),
@@ -1770,6 +1828,15 @@ type WebGLRendererVisibilityViewportCache = {
     }
   }
 
+  function transientRenderNodeVisualTransform(
+    transientNodeTranslation: SceneGraphNodeTranslation | undefined,
+  ): RenderNodeVisualTransform {
+    if (transientNodeTranslation === undefined) {
+      return RENDER_NODE_SOURCE_TRANSFORMS;
+    }
+    return { type: "scene-graph-node-translation", translation: transientNodeTranslation };
+  }
+
   function renderRenderTreeChildrenWithTransientTranslation(
     renderTree: RenderTree,
     viewportTransform: AffineMatrix,
@@ -1777,9 +1844,7 @@ type WebGLRendererVisibilityViewportCache = {
   ): void {
     const previousVisualTransform = currentRenderNodeVisualTransform.value;
     currentTransientNodeTranslation.value = transientNodeTranslation;
-    currentRenderNodeVisualTransform.value = transientNodeTranslation === undefined
-      ? RENDER_NODE_SOURCE_TRANSFORMS
-      : { type: "scene-graph-node-translation", translation: transientNodeTranslation };
+    currentRenderNodeVisualTransform.value = transientRenderNodeVisualTransform(transientNodeTranslation);
     try {
       renderRenderTreeChildren(renderTree, viewportTransform);
     } finally {
@@ -1900,6 +1965,41 @@ type WebGLRendererVisibilityViewportCache = {
     return true;
   }
 
+  function renderScaledViewportMotionFrameFromSettledCache({
+    scene,
+  }: {
+    readonly scene: SceneGraph;
+  }): boolean {
+    const cache = currentSettledFrameCacheForSource(scene);
+    if (cache === null) {
+      return false;
+    }
+    const region = resolveScaledViewportMotionRedrawRegion({
+      previousViewport: sceneViewport(cache.scene),
+      currentViewport: sceneViewport(scene),
+      surfaceWidth: width.value,
+      surfaceHeight: height.value,
+      pixelRatio: pixelRatioRef.value,
+    });
+    if (region === null) {
+      return false;
+    }
+    if (region.needsBackgroundClear) {
+      clearDefaultFramebuffer();
+    }
+    // Reuse the region-copy helper: a scaled blit needs no exposed redraws,
+    // because the magnified/minified cache fills the whole target rect.
+    copySettledFrameCacheRegionToDefaultFramebuffer(cache, {
+      sourceRegion: region.sourceRegion,
+      targetRegion: region.targetRegion,
+      exposedViewportRegions: [],
+    });
+    // The cached frame stays the sharp source for the next zoom step and the
+    // deferred settled render — do NOT re-capture the lossy blit.
+    metrics.viewportMotionScaledBlitCount += 1;
+    return true;
+  }
+
   function renderSettledFrameFromSettledCache(scene: SceneGraph): boolean {
     const frame = defaultFramebufferSettledFrame.value;
     if (frame !== null && defaultFramebufferSettledFrameMatchesCurrentSource(frame, scene)) {
@@ -1910,6 +2010,56 @@ type WebGLRendererVisibilityViewportCache = {
       return false;
     }
     restoreSettledFrameCacheToDefaultFramebuffer(cache);
+    return true;
+  }
+
+  function defaultFramebufferSettledFrameMatchesViewportIgnoringContent(
+    frame: WebGLDefaultFramebufferSettledFrame,
+    scene: SceneGraph,
+  ): boolean {
+    // Same surface and viewport as the current scene, but the document content
+    // (root/version) differs — exactly the shape of a committed edit at a
+    // stationary viewport.
+    return frame.pixelRatio === pixelRatioRef.value &&
+      frame.canvasWidth === canvasBackingWidth() &&
+      frame.canvasHeight === canvasBackingHeight() &&
+      frame.scene.sourceDocumentReference === scene.sourceDocumentReference &&
+      sameSceneViewport(sceneViewport(frame.scene), sceneViewport(scene));
+  }
+
+  function renderCommittedContentRegionFrameFromSettledCache({
+    scene,
+    renderTree,
+    viewportTransform,
+    changedNodeIds,
+  }: {
+    readonly scene: SceneGraph;
+    readonly renderTree: RenderTree;
+    readonly viewportTransform: AffineMatrix;
+    readonly changedNodeIds: readonly SceneNodeId[];
+  }): boolean {
+    const frame = defaultFramebufferSettledFrame.value;
+    if (frame === null || !defaultFramebufferSettledFrameMatchesViewportIgnoringContent(frame, scene)) {
+      return false;
+    }
+    const region = resolveContentEditRedrawRegion({
+      previousChildren: frame.renderTree.children,
+      currentChildren: renderTree.children,
+      changedNodeIds,
+      viewportTransform,
+      viewport: currentViewportRect(),
+    });
+    if (region === null) {
+      return false;
+    }
+    // The default framebuffer still holds the previous settled frame, so only
+    // the affected region needs repainting over it. When the change is entirely
+    // off-screen, the cached pixels are already correct and nothing is redrawn.
+    if (region.redrawViewport !== null) {
+      renderViewportMotionRedrawRegion(renderTree, viewportTransform, region.redrawViewport);
+    }
+    rememberDefaultFramebufferSettledFrame(scene, renderTree);
+    metrics.committedContentRegionRedrawCount += 1;
     return true;
   }
 
@@ -1933,7 +2083,17 @@ type WebGLRendererVisibilityViewportCache = {
       translation === undefined &&
       renderViewportMotionFrameFromSettledCache({ scene, renderTree, viewportTransform })
     ) {
-      rememberDefaultFramebufferSettledFrame(scene);
+      rememberDefaultFramebufferSettledFrame(scene, renderTree);
+      return;
+    }
+    if (
+      currentRenderFrameReason.value === "viewport-motion" &&
+      translation === undefined &&
+      renderScaledViewportMotionFrameFromSettledCache({ scene })
+    ) {
+      // The blit is lossy, so the default framebuffer does NOT hold a settled
+      // frame; forget it so the deferred settled render repaints at fidelity.
+      forgetDefaultFramebufferSettledFrame();
       return;
     }
     if (
@@ -1941,7 +2101,20 @@ type WebGLRendererVisibilityViewportCache = {
       translation === undefined &&
       renderSettledFrameFromSettledCache(scene)
     ) {
-      rememberDefaultFramebufferSettledFrame(scene);
+      rememberDefaultFramebufferSettledFrame(scene, renderTree);
+      return;
+    }
+    if (
+      currentRenderFrameReason.value === "settled" &&
+      translation === undefined &&
+      frameOptions?.changedNodeIds !== undefined &&
+      renderCommittedContentRegionFrameFromSettledCache({
+        scene,
+        renderTree,
+        viewportTransform,
+        changedNodeIds: frameOptions.changedNodeIds,
+      })
+    ) {
       return;
     }
     if (
@@ -1955,7 +2128,7 @@ type WebGLRendererVisibilityViewportCache = {
     clearDefaultFramebuffer();
     renderRenderTreeChildrenWithTransientTranslation(renderTree, viewportTransform, translation);
     if (currentRenderFrameReason.value === "settled" && translation === undefined) {
-      rememberDefaultFramebufferSettledFrame(scene);
+      rememberDefaultFramebufferSettledFrame(scene, renderTree);
       return;
     }
     forgetDefaultFramebufferSettledFrame();
@@ -3128,6 +3301,7 @@ type WebGLRendererVisibilityViewportCache = {
     invalidateStateAfterRawEffectRendererCall();
 
     try {
+      const savedClipStencil = saveClipStencilContents();
       const savedClipStack = clipStack.splice(0);
       const hadOuterClip = savedClipStack.length > 0;
       clipActive.value = false;
@@ -3137,7 +3311,9 @@ type WebGLRendererVisibilityViewportCache = {
 
       clipStack.push(...savedClipStack);
       clipActive.value = hadOuterClip;
-      markClipStencilNeedsRebuild();
+      // The offscreen capture left the default framebuffer's clip-stencil
+      // contents intact; restore their validity so the next draw reuses them.
+      restoreClipStencilContents(savedClipStencil);
 
       glState.setEnabled(gl.BLEND, true);
       gl.blendFuncSeparate(
@@ -3205,6 +3381,7 @@ type WebGLRendererVisibilityViewportCache = {
     // disabled STENCIL_TEST, so we swap `clipStack` for an empty
     // one and mark the deferred rebuild as needed so the first draw
     // inside the framebuffer re-derives state for an empty clip stack.
+    const savedClipStencil = saveClipStencilContents();
     const savedClipStack = clipStack.splice(0);
     // `clipActive.value` only updates on flush; if previous siblings
     // pushed and popped without an intervening draw, it lags reality.
@@ -3221,7 +3398,9 @@ type WebGLRendererVisibilityViewportCache = {
 
       clipStack.push(...savedClipStack);
       clipActive.value = hadOuterClip;
-      markClipStencilNeedsRebuild();
+      // The offscreen capture left the default framebuffer's clip-stencil
+      // contents intact; restore their validity so the next draw reuses them.
+      restoreClipStencilContents(savedClipStencil);
 
       glState.setEnabled(gl.BLEND, true);
       gl.blendFuncSeparate(
@@ -3398,6 +3577,7 @@ type WebGLRendererVisibilityViewportCache = {
     });
     invalidateStateAfterRawEffectRendererCall();
 
+    const savedClipStencil = saveClipStencilContents();
     const savedClipStack = clipStack.splice(0);
     const hadOuterClip = savedClipStack.length > 0;
     clipActive.value = false;
@@ -3419,7 +3599,9 @@ type WebGLRendererVisibilityViewportCache = {
 
       clipStack.push(...savedClipStack);
       clipActive.value = hadOuterClip;
-      markClipStencilNeedsRebuild();
+      // The offscreen capture left the default framebuffer's clip-stencil
+      // contents intact; restore their validity so the next draw reuses them.
+      restoreClipStencilContents(savedClipStencil);
 
       glState.setEnabled(gl.BLEND, true);
       gl.blendFuncSeparate(

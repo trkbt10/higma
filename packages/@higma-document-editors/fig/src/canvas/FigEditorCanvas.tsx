@@ -10,45 +10,36 @@ import {
 } from "@higma-editor-surfaces/controls/canvas";
 import { ContextMenu, type MenuEntry } from "@higma-editor-kernel/ui/context-menu";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
-import { createFigFamilyRenderOptions, useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
+import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import {
-  createNodeId,
-  flattenSceneGraphNodeBounds,
   type SceneGraph,
   type SceneGraphNodeTranslation,
 } from "@higma-document-renderers/fig/scene-graph";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import type { BooleanOperationType } from "@higma-primitives/path";
-import type { FigGuid, FigNode, FigPaint } from "@higma-document-models/fig/types";
+import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
 import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import {
   FIG_NODE_MUTATION_SOURCE,
   useFigEditor,
+  useFigEditorRenderProjection,
   useFigEditorSelectedFigNodeDragTransform,
+  useFigEditorVectorPathDraftSession,
+  useFigEditorVectorPathDraftSessionReader,
   type FigCreationMode,
   type FigEditorKiwiDocumentMutation,
 } from "../context/FigEditorContext";
-import { translateFigEditorSelectedNodeDragBoundsList } from "../context/fig-editor-selected-node-drag-bounds";
 import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
 import {
   canvasIdsFromGuids,
   resolveSelectableMarqueeGuids,
 } from "./interaction/selection-resolution";
-import {
-  collectExplicitKiwiSourceDocumentGuidKeys,
-  filterRenderedNodeBoundsToPrimaryKiwiDocument,
-} from "./interaction/rendered-node-bounds";
 import { resolveInteractionTargetGuid } from "./interaction/target-resolution";
-import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy";
 import { exceedsThreshold } from "./interaction/drag-threshold";
 import { useFigKeyboard } from "./interaction/use-fig-keyboard";
-import { computeCanvasBoundsFromSceneGraphNodeBounds } from "./layout/canvas-bounds";
-import type { LayoutBounds } from "./layout/layout-bounds";
-import { resolveViewportRenderRegion } from "./layout/viewport-render-region";
-import { filterNodeBoundsForViewport } from "./layout/viewport-node-visibility";
 import { FigTextEditOverlay } from "../text-edit/FigTextEditOverlay";
 import {
   addVectorPathPoint,
@@ -61,17 +52,13 @@ import {
   type VectorPathHandle,
 } from "../vector-path/editor-model";
 import {
-  applyVectorPathDraftOperation,
-  commitVectorPathDraftToNodeSpec,
   getVectorPathDraftControlLines,
   getVectorPathDraftHandleCursor,
   getVectorPathDraftHandles,
   resolveVectorPathDraftHandleIntent,
   vectorPathDraftToPreviewPath,
   type VectorPathDraftHandle,
-  type VectorPathDraftOperationResult,
   type VectorPathDraftParent,
-  type VectorPathDraftSession,
 } from "../vector-path/draft";
 import { getVectorPathDraftHandleLabel } from "../vector-path/draft-labels";
 import {
@@ -99,13 +86,6 @@ export type FigEditorCanvasProps = {
   readonly webglInitializationDelayMs?: number;
 };
 
-type MoveSession = {
-  readonly guid: FigGuid;
-  readonly startX: number;
-  readonly startY: number;
-  readonly transformed: boolean;
-};
-
 type CreationDragSession = {
   readonly startX: number;
   readonly startY: number;
@@ -131,7 +111,6 @@ type ContextMenuState = {
 
 const INITIAL_ZOOM_MODE: ZoomMode = "fit";
 const INITIAL_VIEWPORT_MARGIN = 48;
-const UNMEASURED_SCENE_GRAPH_SURFACE_SIZE = 0;
 const VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX = 3;
 const VECTOR_PATH_CLOSE_TOLERANCE_PX = 8;
 const ACTIVE_PAGE_VECTOR_PATH_DRAFT_PARENT: VectorPathDraftParent = {
@@ -206,16 +185,6 @@ type ViewportSurfaceProps = {
   readonly renderer: FigEditorRendererKind;
   readonly webglInitializationDelayMs: number | undefined;
 };
-
-function viewportBoundsFromRenderRegion(
-  renderRegion: ViewportSurfaceRenderRegion | null,
-): LayoutBounds | null {
-  if (renderRegion === null) {
-    return null;
-  }
-  return { x: renderRegion.x, y: renderRegion.y, width: renderRegion.width, height: renderRegion.height };
-}
-
 
 function viewportWebGLSurfaceIdentity(renderer: FigEditorRendererKind) {
   if (renderer !== "webgl") {
@@ -508,6 +477,7 @@ export function FigEditorCanvas({
     activePage,
     selectedGuids,
     creationMode,
+    policy,
     textEdit,
     canUndo,
     canRedo,
@@ -518,9 +488,11 @@ export function FigEditorCanvas({
     enterTextEdit,
     exitTextEdit,
     setCanvasViewport,
-    beginSelectedFigNodeDragTransform,
-    translateSelectedFigNodeDragTransform,
-    endSelectedFigNodeDragTransform,
+    setRenderEnvironment,
+    beginMoveAt,
+    moveTo,
+    endMove,
+    applyVectorPathDraftOp,
     updateNode,
     addNodeToActivePage,
     createBooleanOperationFromSelection,
@@ -533,125 +505,46 @@ export function FigEditorCanvas({
     throw new Error("FigEditorCanvas requires a CANVAS node in the Kiwi document");
   }
 
-  const pageChildren = useMemo(() => resources.childrenOf(activePage), [activePage, resources]);
-  const sceneGraphCanvasWidth = canvasWidth ?? UNMEASURED_SCENE_GRAPH_SURFACE_SIZE;
-  const sceneGraphCanvasHeight = canvasHeight ?? UNMEASURED_SCENE_GRAPH_SURFACE_SIZE;
+  // The SceneGraph and all derived bounds/extents/translation are owned and
+  // computed by the store-side render projection; React only reads them and
+  // injects the DOM-measured environment (font resolver, canvas overrides).
+  const renderProjection = useFigEditorRenderProjection();
+  useEffect(() => {
+    setRenderEnvironment({
+      textFontResolver,
+      canvasWidthOverride: canvasWidth,
+      canvasHeightOverride: canvasHeight,
+      showHiddenNodes: false,
+    });
+  }, [setRenderEnvironment, textFontResolver, canvasWidth, canvasHeight]);
   const selectedIds = useMemo(() => canvasIdsFromGuids(selectedGuids), [selectedGuids]);
-  const selectedFigNodeDragSceneGraphTranslation = useMemo((): SceneGraphNodeTranslation | undefined => {
-    if (selectedFigNodeDragTransform === null) {
-      return undefined;
-    }
-    return {
-      nodeId: createNodeId(guidToString(selectedFigNodeDragTransform.guid)),
-      dx: selectedFigNodeDragTransform.dx,
-      dy: selectedFigNodeDragTransform.dy,
-    };
-  }, [selectedFigNodeDragTransform]);
+  const selectedFigNodeDragSceneGraphTranslation = renderProjection.sceneGraphNodeTranslation;
   const primaryId = selectedIds[0];
   const [zoomMode, setZoomMode] = useState<ZoomMode>(INITIAL_ZOOM_MODE);
   const [viewportRenderContext, setViewportRenderContext] = useState<EditorCanvasViewportContentContext | null>(null);
   const [viewportRevision, setViewportRevision] = useState(0);
   const [viewportInteractionActive, setViewportInteractionActive] = useState(false);
-  const viewportScale = viewportRenderContext?.viewport.scale ?? 1;
-  const renderRegion = useMemo(
-    () => resolveViewportRenderRegion({ context: viewportRenderContext }),
-    [viewportRenderContext],
-  );
-  const sceneGraphSurfaceWidth = renderRegion?.surfaceWidth ?? sceneGraphCanvasWidth;
-  const sceneGraphSurfaceHeight = renderRegion?.surfaceHeight ?? sceneGraphCanvasHeight;
-  const sceneGraphForEditorOverlay = useFigSceneGraph({
-    page: activePage,
-    nodes: pageChildren,
-    kiwiDocumentMutation,
-    canvasWidth: sceneGraphSurfaceWidth,
-    canvasHeight: sceneGraphSurfaceHeight,
-    viewportX: renderRegion?.x ?? 0,
-    viewportY: renderRegion?.y ?? 0,
-    viewportWidth: renderRegion?.width ?? sceneGraphCanvasWidth,
-    viewportHeight: renderRegion?.height ?? sceneGraphCanvasHeight,
-    showHiddenNodes: false,
-    resources,
-    textFontResolver,
-  });
-  const baseWorldBounds = useMemo(() => {
-    if (sceneGraphForEditorOverlay === null) {
-      return [];
-    }
-    return flattenSceneGraphNodeBounds(sceneGraphForEditorOverlay);
-  }, [sceneGraphForEditorOverlay]);
-  const explicitSourceGuidKeys = useMemo(
-    () => collectExplicitKiwiSourceDocumentGuidKeys(context.kiwiSourceDocuments),
-    [context.kiwiSourceDocuments],
-  );
-  const basePrimaryWorldBounds = useMemo(() => filterRenderedNodeBoundsToPrimaryKiwiDocument({
-    document: context.document,
-    explicitSourceGuidKeys,
-    bounds: baseWorldBounds,
-    owner: "FigEditorCanvas",
-  }), [baseWorldBounds, context.document, explicitSourceGuidKeys]);
-  const worldBounds = useMemo(() => {
-    if (selectedFigNodeDragTransform === null) {
-      return baseWorldBounds;
-    }
-    return translateFigEditorSelectedNodeDragBoundsList(
-      context.document.nodesByGuid,
-      baseWorldBounds,
-      {
-        draggedGuidKey: guidToString(selectedFigNodeDragTransform.guid),
-        dx: selectedFigNodeDragTransform.dx,
-        dy: selectedFigNodeDragTransform.dy,
-      },
-    );
-  }, [baseWorldBounds, context.document.nodesByGuid, selectedFigNodeDragTransform]);
-  const primaryWorldBounds = useMemo(() => {
-    if (selectedFigNodeDragTransform === null) {
-      return basePrimaryWorldBounds;
-    }
-    return translateFigEditorSelectedNodeDragBoundsList(
-      context.document.nodesByGuid,
-      basePrimaryWorldBounds,
-      {
-        draggedGuidKey: guidToString(selectedFigNodeDragTransform.guid),
-        dx: selectedFigNodeDragTransform.dx,
-        dy: selectedFigNodeDragTransform.dy,
-      },
-    );
-  }, [basePrimaryWorldBounds, context.document.nodesByGuid, selectedFigNodeDragTransform]);
-  const extents = useMemo(() => {
-    const computed = computeCanvasBoundsFromSceneGraphNodeBounds(worldBounds);
-    return {
-      ...computed,
-      width: canvasWidth ?? computed.width,
-      height: canvasHeight ?? computed.height,
-    };
-  }, [canvasHeight, canvasWidth, worldBounds]);
-  const viewportBounds = useMemo(() => viewportBoundsFromRenderRegion(renderRegion), [renderRegion]);
-  const baseVisiblePrimaryWorldBounds = useMemo(
-    () => filterNodeBoundsForViewport({
-      bounds: basePrimaryWorldBounds,
-      viewport: viewportBounds,
-      selectedNodeGuidKeys: selectedIds,
-    }),
-    [basePrimaryWorldBounds, selectedIds, viewportBounds],
-  );
-  const visibleItemBounds = useMemo(
-    () => filterNodeBoundsForViewport({
-      bounds: primaryWorldBounds,
-      viewport: viewportBounds,
-      selectedNodeGuidKeys: selectedIds,
-    }),
-    [primaryWorldBounds, selectedIds, viewportBounds],
-  );
+  // renderRegion / viewportScale come from the same projection as the SceneGraph
+  // so the renderer is never handed a SceneGraph and surface size derived from
+  // two different viewport measurements.
+  const viewportScale = renderProjection.viewportScale;
+  const renderRegion = renderProjection.renderRegion;
+  const sceneGraphForEditorOverlay = renderProjection.sceneGraph;
+  const basePrimaryWorldBounds = renderProjection.basePrimaryWorldBounds;
+  const primaryWorldBounds = renderProjection.primaryWorldBounds;
+  const extents = renderProjection.extents;
+  const baseVisiblePrimaryWorldBounds = renderProjection.baseVisibleNodeBounds;
+  const visibleItemBounds = renderProjection.visibleNodeBounds;
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
-  const [vectorPathDraftSession, setVectorPathDraftSession] = useState<VectorPathDraftSession | null>(null);
+  // The pen-tool draft session is owned by the store; React reads it for the
+  // overlay and via a lag-free getter inside the global pointer listeners.
+  const vectorPathDraftSession = useFigEditorVectorPathDraftSession();
+  const readVectorPathDraftSession = useFigEditorVectorPathDraftSessionReader();
   const canvasRef = useRef<EditorCanvasHandle>(null);
-  const moveSessionRef = useRef<MoveSession | null>(null);
   const creationDragSessionRef = useRef<CreationDragSession | null>(null);
   const vectorPathDragRef = useRef<VectorPathHandle | null>(null);
-  const vectorPathDraftSessionRef = useRef<VectorPathDraftSession | null>(null);
   const vectorPathDraftHandleDragRef = useRef<VectorPathDraftHandleDrag | null>(null);
   const previousPathEditingEnabledRef = useRef(false);
-  const policy = useMemo(() => resolveCanvasInteractionPolicy(creationMode), [creationMode]);
   const primaryNode = useMemo(() => {
     if (primaryId === undefined) {
       return undefined;
@@ -693,50 +586,24 @@ export function FigEditorCanvas({
     });
   }, [contextMenu?.kind, selectedGuids.length]);
 
-  const publishVectorPathDraftResult = useCallback((
-    result: VectorPathDraftOperationResult,
-    nextModeAfterCommit: FigCreationMode | undefined,
-  ): void => {
-    vectorPathDraftSessionRef.current = result.session;
-    setVectorPathDraftSession(result.session);
-    if (result.committedDraft === undefined) {
-      return;
-    }
-    const spec = commitVectorPathDraftToNodeSpec(result.committedDraft);
-    addNodeToActivePage(
-      spec,
-      result.committedDraft.parentId,
-      FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathCommit,
-    );
-    if (nextModeAfterCommit !== undefined) {
-      setCreationMode(nextModeAfterCommit);
-    }
-  }, [addNodeToActivePage, setCreationMode]);
-
   const commitVectorPathDraft = useCallback((nextMode: FigCreationMode): void => {
-    publishVectorPathDraftResult(
-      applyVectorPathDraftOperation(vectorPathDraftSessionRef.current, { type: "commit" }),
-      nextMode,
-    );
-  }, [publishVectorPathDraftResult]);
+    applyVectorPathDraftOp({ type: "commit" }, nextMode);
+  }, [applyVectorPathDraftOp]);
 
   const placeVectorPathDraftPoint = useCallback((
     coords: CanvasPageCoords,
     event: Pick<PointerEvent, "clientX" | "clientY">,
   ): void => {
     const point = worldPoint(coords);
-    publishVectorPathDraftResult(
-      applyVectorPathDraftOperation(vectorPathDraftSessionRef.current, {
-        type: "place-point",
-        parent: ACTIVE_PAGE_VECTOR_PATH_DRAFT_PARENT,
-        localPoint: point,
-        pagePoint: point,
-        pointerStart: { clientX: event.clientX, clientY: event.clientY },
-        closeTolerance: screenPxToPagePx(VECTOR_PATH_CLOSE_TOLERANCE_PX, viewportScale),
-      }),
-      "pen",
-    );
-  }, [publishVectorPathDraftResult, viewportScale]);
+    applyVectorPathDraftOp({
+      type: "place-point",
+      parent: ACTIVE_PAGE_VECTOR_PATH_DRAFT_PARENT,
+      localPoint: point,
+      pagePoint: point,
+      pointerStart: { clientX: event.clientX, clientY: event.clientY },
+      closeTolerance: screenPxToPagePx(VECTOR_PATH_CLOSE_TOLERANCE_PX, viewportScale),
+    }, "pen");
+  }, [applyVectorPathDraftOp, viewportScale]);
 
   const pointFromPointerEvent = useCallback((event: Pick<PointerEvent, "clientX" | "clientY">) => {
     return requirePagePointFromScreen(canvasRef.current, event);
@@ -820,7 +687,7 @@ export function FigEditorCanvas({
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent): void => {
-      const current = vectorPathDraftSessionRef.current;
+      const current = readVectorPathDraftSession();
       if (current === null) {
         return;
       }
@@ -828,7 +695,7 @@ export function FigEditorCanvas({
       const point = pointFromPointerEvent(event);
       const start = current.pointerStart;
       if (handleDrag === null && start !== undefined) {
-        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+        applyVectorPathDraftOp({
           type: "anchor-drag-preview",
           localPoint: point,
           pagePoint: point,
@@ -839,14 +706,11 @@ export function FigEditorCanvas({
             clientY: event.clientY,
             thresholdPx: VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX,
           }),
-        }), undefined);
+        });
         return;
       }
       if (handleDrag === null) {
-        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
-          type: "preview",
-          pagePoint: point,
-        }), undefined);
+        applyVectorPathDraftOp({ type: "preview", pagePoint: point });
         return;
       }
       const intent = resolveVectorPathDraftHandleIntent({
@@ -862,16 +726,16 @@ export function FigEditorCanvas({
         return;
       }
       vectorPathDraftHandleDragRef.current = { ...handleDrag, moved: true };
-      publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+      applyVectorPathDraftOp({
         type: "move-handle",
         handle: handleDrag.handle,
         localPoint: point,
         pagePoint: point,
-      }), undefined);
+      });
     };
 
     const handlePointerUp = (event: PointerEvent): void => {
-      const current = vectorPathDraftSessionRef.current;
+      const current = readVectorPathDraftSession();
       const handleDrag = vectorPathDraftHandleDragRef.current;
       vectorPathDraftHandleDragRef.current = null;
       if (current === null) {
@@ -880,7 +744,7 @@ export function FigEditorCanvas({
       const start = current.pointerStart;
       if (handleDrag === null && start !== undefined) {
         const point = pointFromPointerEvent(event);
-        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+        applyVectorPathDraftOp({
           type: "anchor-drag-end",
           localPoint: point,
           pagePoint: point,
@@ -891,7 +755,7 @@ export function FigEditorCanvas({
             clientY: event.clientY,
             thresholdPx: VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX,
           }),
-        }), undefined);
+        });
         return;
       }
       if (handleDrag === null) {
@@ -907,16 +771,16 @@ export function FigEditorCanvas({
         dragThresholdPx: VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX,
       });
       if (intent === "close-start-anchor" && !handleDrag.moved) {
-        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, { type: "close-from-start-handle" }), "pen");
+        applyVectorPathDraftOp({ type: "close-from-start-handle" }, "pen");
         return;
       }
       const point = pointFromPointerEvent(event);
-      publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+      applyVectorPathDraftOp({
         type: "move-handle",
         handle: handleDrag.handle,
         localPoint: point,
         pagePoint: point,
-      }), undefined);
+      });
     };
 
     globalThis.addEventListener("pointermove", handlePointerMove);
@@ -925,16 +789,16 @@ export function FigEditorCanvas({
       globalThis.removeEventListener("pointermove", handlePointerMove);
       globalThis.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [pointFromPointerEvent, publishVectorPathDraftResult]);
+  }, [applyVectorPathDraftOp, pointFromPointerEvent, readVectorPathDraftSession]);
 
   useEffect(() => {
     const wasPathEditingEnabled = previousPathEditingEnabledRef.current;
     previousPathEditingEnabledRef.current = policy.canEditPath;
-    if (!wasPathEditingEnabled || policy.canEditPath || vectorPathDraftSessionRef.current === null) {
+    if (!wasPathEditingEnabled || policy.canEditPath || readVectorPathDraftSession() === null) {
       return;
     }
     commitVectorPathDraft("select");
-  }, [commitVectorPathDraft, policy.canEditPath]);
+  }, [commitVectorPathDraft, policy.canEditPath, readVectorPathDraftSession]);
 
   const handleItemPointerDown = useCallback((id: string, coords: CanvasPageCoords, event: ReactPointerEvent): void => {
     if (textEdit.type === "active") {
@@ -955,7 +819,7 @@ export function FigEditorCanvas({
       point,
     });
     const node = context.document.nodesByGuid.get(guidToString(guid));
-    const startsPathEdit = policy.canEditPath && vectorPathDraftSessionRef.current === null && canEditKiwiNodePath(node);
+    const startsPathEdit = policy.canEditPath && readVectorPathDraftSession() === null && canEditKiwiNodePath(node);
     if (startsPathEdit) {
       selectNodeGuid(guid, {
         additive: coords.addToSelection,
@@ -975,7 +839,7 @@ export function FigEditorCanvas({
       toggle: coords.toggle,
     });
     if (policy.canMove) {
-      moveSessionRef.current = { guid, startX: point.x, startY: point.y, transformed: false };
+      beginMoveAt(guid, point);
     }
   }, [
     context.document,
@@ -1350,22 +1214,8 @@ export function FigEditorCanvas({
   }, [vectorPathDraftOverlay, vectorPathOverlay]);
 
   const handleItemDragMove = useCallback((coords: CanvasPageCoords): void => {
-    const session = moveSessionRef.current;
-    if (session === null) {
-      return;
-    }
-    const point = worldPoint(coords);
-    const dx = point.x - session.startX;
-    const dy = point.y - session.startY;
-    if (dx === 0 && dy === 0) {
-      return;
-    }
-    if (!session.transformed) {
-      beginSelectedFigNodeDragTransform();
-    }
-    translateSelectedFigNodeDragTransform(session.guid, dx, dy);
-    moveSessionRef.current = { ...session, startX: point.x, startY: point.y, transformed: true };
-  }, [beginSelectedFigNodeDragTransform, translateSelectedFigNodeDragTransform]);
+    moveTo(worldPoint(coords));
+  }, [moveTo]);
 
   const handleItemDragEnd = useCallback((coords: CanvasPageCoords): void => {
     const creationSession = creationDragSessionRef.current;
@@ -1377,12 +1227,8 @@ export function FigEditorCanvas({
       addNodeToActivePage(spec, null, FIG_NODE_MUTATION_SOURCE.editorCanvasCreationDrag);
       return;
     }
-    const moveSession = moveSessionRef.current;
-    moveSessionRef.current = null;
-    if (moveSession?.transformed === true) {
-      endSelectedFigNodeDragTransform();
-    }
-  }, [addNodeToActivePage, creationMode, endSelectedFigNodeDragTransform]);
+    endMove();
+  }, [addNodeToActivePage, creationMode, endMove]);
 
   const getItemAriaLabel = useCallback((id: string): string => {
     return createItemLabel(context.document.nodesByGuid, id);
@@ -1474,7 +1320,7 @@ export function FigEditorCanvas({
     if (renderRegion === null) {
       return undefined;
     }
-    const renderOptions = createFigFamilyRenderOptions(context);
+    const renderOptions = renderProjection.renderOptions;
     return (
       <ViewportSurface
         kiwiDocumentMutation={kiwiDocumentMutation}

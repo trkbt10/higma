@@ -1,6 +1,7 @@
 /** @file React-independent WebGL viewport renderer controller. */
 
 import {
+  createNodeId,
   findSceneGraphNode,
   type KiwiSceneGraphMutation,
   type SceneGraph,
@@ -123,7 +124,6 @@ export type WebGLViewportPresentedSceneGraphFrame = {
 export type WebGLViewportRenderSchedulingInput = {
   readonly viewportMotionRender: boolean;
   readonly sceneGraphInteractionRender: boolean;
-  readonly viewportInteractionActive: boolean;
   readonly sceneGraphInteractionActive: boolean;
 };
 
@@ -172,19 +172,25 @@ const EMPTY_KIWI_DOCUMENT_MUTATION_GUID_KEYS: readonly string[] = Object.freeze(
 export function resolveWebGLViewportRenderSchedulingDecision({
   viewportMotionRender,
   sceneGraphInteractionRender,
-  viewportInteractionActive,
   sceneGraphInteractionActive,
 }: WebGLViewportRenderSchedulingInput): WebGLViewportRenderSchedulingDecision {
-  if (viewportMotionRender && viewportInteractionActive) {
-    return {
-      frameReason: "viewport-motion",
-      scheduleSettledAfterViewportMotion: false,
-    };
-  }
   if (sceneGraphInteractionRender && sceneGraphInteractionActive) {
     return {
       frameReason: "scene-graph-interaction",
       scheduleSettledAfterViewportMotion: false,
+    };
+  }
+  if (viewportMotionRender) {
+    // The viewport changed since the last frame (the real "motion" signal — no
+    // interaction flag or timeout). Present a cheap frame now (pan region-copy
+    // or, for a scale change, a lossy scaled blit of the cached settled frame)
+    // and schedule ONE high-fidelity settled render. requestIdleCallback
+    // coalesces, so during a rapid pan/zoom burst each motion frame cancels and
+    // reschedules the settle; it runs once the burst goes idle, recomputing the
+    // final pixelRatio and repainting effects.
+    return {
+      frameReason: "viewport-motion",
+      scheduleSettledAfterViewportMotion: true,
     };
   }
   return {
@@ -596,6 +602,7 @@ export function createWebGLViewportRendererController(
   const latestRenderRef = { value: null as LatestRender | null };
   const previousPresentedFrameRef = { value: null as WebGLViewportPresentedSceneGraphFrame | null };
   const hasPresentedFrameRef = { value: false };
+  const lastAppliedPixelRatioRef = { value: null as number | null };
   const previousViewportRevisionRef = { value: undefined as number | undefined };
   const previousSceneGraphInteractionRevisionRef = { value: undefined as number | undefined };
   const scheduledRenderFrameRef = { value: null as number | null };
@@ -704,10 +711,21 @@ export function createWebGLViewportRendererController(
     return renderer;
   }
 
-  function pixelRatioForScene(scene: SceneGraph): number {
+  function pixelRatioForScene(scene: SceneGraph, holdForViewportMotion: boolean): number {
     const input = currentInput();
     if (input === null) {
       throw new Error("WebGL viewport renderer controller requires input before resolving pixelRatio");
+    }
+    // While the viewport is moving (this frame is a viewport-motion frame),
+    // keep the last applied pixelRatio so a zoom that crosses a quantization
+    // bucket does not call renderer.setPixelRatio (which would discard the
+    // settled-frame cache the in-gesture scaled blit reads from). The deferred
+    // settled render is NOT a viewport-motion frame, so it recomputes the true
+    // final-zoom pixelRatio below.
+    const held = lastAppliedPixelRatioRef.value;
+    if (holdForViewportMotion && held !== null) {
+      setPixelRatioSnapshot(held);
+      return held;
     }
     const pixelRatio = resolveWebGLViewportPixelRatio({
       devicePixelRatio: scheduler.devicePixelRatio(),
@@ -715,8 +733,31 @@ export function createWebGLViewportRendererController(
       surfaceWidth: scene.width,
       surfaceHeight: scene.height,
     });
+    lastAppliedPixelRatioRef.value = pixelRatio;
     setPixelRatioSnapshot(pixelRatio);
     return pixelRatio;
+  }
+
+  function committedContentChangedNodeIds(
+    input: WebGLViewportRendererControllerInput,
+    frameReason: WebGLRenderFrameReason,
+  ): readonly SceneNodeId[] | undefined {
+    // Only a committed in-place content edit (settled frame, no transient
+    // translation overlay, node-content scope) can be presented as a
+    // changed-region redraw. The renderer still validates that the previous
+    // frame is a matching settled frame and falls back to a full render
+    // otherwise.
+    if (frameReason !== "settled" || input.sceneGraphNodeTranslation !== undefined) {
+      return undefined;
+    }
+    if (input.kiwiDocumentMutation.scope !== "node-content") {
+      return undefined;
+    }
+    const changedGuidKeys = input.kiwiDocumentMutation.changedGuidKeys;
+    if (changedGuidKeys.length === 0) {
+      return undefined;
+    }
+    return changedGuidKeys.map((guidKey) => createNodeId(guidKey));
   }
 
   function renderScene(
@@ -731,7 +772,11 @@ export function createWebGLViewportRendererController(
       throw new Error("WebGL viewport renderer controller requires input before rendering");
     }
     renderer.setPixelRatio(pixelRatio);
-    renderer.render(scene, { frameReason, transientNodeTranslation: input.sceneGraphNodeTranslation });
+    renderer.render(scene, {
+      frameReason,
+      transientNodeTranslation: input.sceneGraphNodeTranslation,
+      changedNodeIds: committedContentChangedNodeIds(input, frameReason),
+    });
     writeMetrics(renderer);
     hasPresentedFrameRef.value = true;
     previousPresentedFrameRef.value = {
@@ -785,32 +830,34 @@ export function createWebGLViewportRendererController(
         return;
       }
       const pendingSettledRender = latest;
+      // The motion burst has settled: recompute the true pixelRatio for the
+      // final viewport (it was held at a stale value during the gesture) so the
+      // high-fidelity render is at the correct resolution.
+      const settledPixelRatio = pixelRatioForScene(pendingSettledRender.scene, false);
       if (renderer.isScenePrepared(pendingSettledRender.scene)) {
-        renderScene(renderer, pendingSettledRender.scene, pendingSettledRender.pixelRatio, "settled");
+        renderScene(renderer, pendingSettledRender.scene, settledPixelRatio, "settled");
         return;
       }
-      renderer.setPixelRatio(pendingSettledRender.pixelRatio);
+      renderer.setPixelRatio(settledPixelRatio);
       void renderer.prepareScene(pendingSettledRender.scene).then(
         () => {
           writeMetrics(renderer);
           const current = latestRenderRef.value;
-          if (current?.scene !== pendingSettledRender.scene || current.pixelRatio !== pendingSettledRender.pixelRatio) {
+          if (current?.scene !== pendingSettledRender.scene) {
             return;
           }
-          renderScene(renderer, pendingSettledRender.scene, pendingSettledRender.pixelRatio, "settled");
+          renderScene(renderer, pendingSettledRender.scene, settledPixelRatio, "settled");
         },
         (error: unknown) => {
           throw error;
         },
       );
     };
-    if (scheduler.requestIdleCallback !== undefined) {
-      settledRenderScheduleRef.value = {
-        kind: "idle-callback",
-        id: scheduler.requestIdleCallback(renderLatestSettledFrame),
-      };
-      return;
-    }
+    // Use requestAnimationFrame, not requestIdleCallback: each viewport-motion
+    // frame cancels and reschedules this, so it fires on the first frame after
+    // the pan/zoom burst stops. rAF is serviced by the frame loop and cannot be
+    // starved the way an idle callback can when the main thread stays busy, so
+    // the high-fidelity settle reliably follows the gesture.
     settledRenderScheduleRef.value = {
       kind: "animation-frame",
       id: scheduler.requestAnimationFrame(renderLatestSettledFrame),
@@ -864,13 +911,11 @@ export function createWebGLViewportRendererController(
     pixelRatio: number,
     viewportMotionRender: boolean,
     sceneGraphInteractionRender: boolean,
-    viewportInteractionActive: boolean,
     sceneGraphInteractionActive: boolean,
   ): void {
     const decision = resolveWebGLViewportRenderSchedulingDecision({
       viewportMotionRender,
       sceneGraphInteractionRender,
-      viewportInteractionActive,
       sceneGraphInteractionActive,
     });
     renderScene(renderer, scene, pixelRatio, decision.frameReason);
@@ -886,7 +931,6 @@ export function createWebGLViewportRendererController(
     prepared: PendingPrepare,
     viewportMotionRender: boolean,
     sceneGraphInteractionRender: boolean,
-    viewportInteractionActive: boolean,
     sceneGraphInteractionActive: boolean,
   ): void {
     const latest = latestRenderRef.value;
@@ -900,7 +944,6 @@ export function createWebGLViewportRendererController(
       prepared.pixelRatio,
       viewportMotionRender,
       sceneGraphInteractionRender,
-      viewportInteractionActive,
       sceneGraphInteractionActive,
     );
   }
@@ -909,7 +952,6 @@ export function createWebGLViewportRendererController(
     renderer: WebGLFigmaRendererInstance,
     viewportMotionRender: boolean,
     sceneGraphInteractionRender: boolean,
-    viewportInteractionActive: boolean,
     sceneGraphInteractionActive: boolean,
   ): void {
     if (prepareRunningRef.value) {
@@ -932,14 +974,12 @@ export function createWebGLViewportRendererController(
           next,
           viewportMotionRender,
           sceneGraphInteractionRender,
-          viewportInteractionActive,
           sceneGraphInteractionActive,
         );
         runPrepareQueue(
           renderer,
           viewportMotionRender,
           sceneGraphInteractionRender,
-          viewportInteractionActive,
           sceneGraphInteractionActive,
         );
       },
@@ -956,16 +996,15 @@ export function createWebGLViewportRendererController(
     pixelRatio: number,
     viewportMotionRender: boolean,
     sceneGraphInteractionRender: boolean,
-    viewportInteractionActive: boolean,
     sceneGraphInteractionActive: boolean,
   ): void {
     if (!renderer.isScenePrepared(scene)) {
       setPhaseUntilFirstPresentedFrame("scheduled");
       pendingPrepareRef.value = { scene, pixelRatio };
-      runPrepareQueue(renderer, viewportMotionRender, sceneGraphInteractionRender, viewportInteractionActive, sceneGraphInteractionActive);
+      runPrepareQueue(renderer, viewportMotionRender, sceneGraphInteractionRender, sceneGraphInteractionActive);
       return;
     }
-    requestRender(renderer, scene, pixelRatio, viewportMotionRender, sceneGraphInteractionRender, viewportInteractionActive, sceneGraphInteractionActive);
+    requestRender(renderer, scene, pixelRatio, viewportMotionRender, sceneGraphInteractionRender, sceneGraphInteractionActive);
   }
 
   function initializeAndRender(
@@ -976,7 +1015,7 @@ export function createWebGLViewportRendererController(
     if (input.sceneGraph === null) {
       return;
     }
-    const pixelRatio = pixelRatioForScene(input.sceneGraph);
+    const pixelRatio = pixelRatioForScene(input.sceneGraph, viewportMotionRender);
     latestRenderRef.value = { scene: input.sceneGraph, pixelRatio };
     const renderer = rendererRef.value ?? createRenderer(input, pixelRatio);
     renderWithResources(
@@ -985,7 +1024,6 @@ export function createWebGLViewportRendererController(
       pixelRatio,
       viewportMotionRender,
       sceneGraphInteractionRender,
-      input.viewportInteractionActive === true,
       input.sceneGraphInteractionActive === true,
     );
   }
@@ -1017,7 +1055,7 @@ export function createWebGLViewportRendererController(
       return;
     }
     validateInitializationDelayMs(input.initializationDelayMs, input.errorContext);
-    const pixelRatio = pixelRatioForScene(input.sceneGraph);
+    const pixelRatio = pixelRatioForScene(input.sceneGraph, viewportMotionRender);
     latestRenderRef.value = { scene: input.sceneGraph, pixelRatio };
     if (isOnlyViewportInteractionActivation(input, viewportMotionRender)) {
       return;
@@ -1033,7 +1071,6 @@ export function createWebGLViewportRendererController(
         pixelRatio,
         viewportMotionRender,
         sceneGraphInteractionRender,
-        input.viewportInteractionActive === true,
         input.sceneGraphInteractionActive === true,
       );
       return;
@@ -1116,6 +1153,7 @@ export function createWebGLViewportRendererController(
       previousPresentedFrameRef.value = null;
       previousViewportRevisionRef.value = undefined;
       previousSceneGraphInteractionRevisionRef.value = undefined;
+      lastAppliedPixelRatioRef.value = null;
       hasPresentedFrameRef.value = false;
       rendererRef.value?.dispose();
       rendererRef.value = null;

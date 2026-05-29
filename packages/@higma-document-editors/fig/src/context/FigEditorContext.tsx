@@ -16,11 +16,15 @@ import {
   type FigEditorStore,
 } from "./fig-editor-store";
 import type { FigEditorOperationSurface } from "../operation-surface/fig-editor-operation-surface-types";
+import type { FigEditorRenderProjection } from "./fig-editor-render-projection";
+import type { VectorPathDraftSession } from "../vector-path/draft";
 
 export {
   createFigEditorStore,
   FIG_NODE_MUTATION_SOURCE,
 } from "./fig-editor-store";
+
+export type { FigEditorRenderProjection, FigRenderEnvironment } from "./fig-editor-render-projection";
 
 export type {
   FigCreationMode,
@@ -181,6 +185,36 @@ export function useFigEditorSelectedFigNodeDragTransform(): FigEditorSelectedFig
 export function useFigEditorCanvasViewport(): FigEditorCanvasViewportSnapshot | undefined {
   const store = useRequiredFigEditorStore("useFigEditorCanvasViewport");
   return useFigEditorCanvasViewportSnapshot(store);
+}
+
+/**
+ * Read the store-owned render projection (SceneGraph + bounds + translation +
+ * extents + render region). Updates on document edits, drag transforms, and
+ * viewport changes through one dedicated subscription so React forwards it to
+ * the renderer without deriving any of it.
+ */
+export function useFigEditorRenderProjection(): FigEditorRenderProjection {
+  const store = useRequiredFigEditorStore("useFigEditorRenderProjection");
+  return useSyncExternalStore(
+    store.subscribeRenderProjection,
+    store.getRenderProjectionSnapshot,
+    store.getRenderProjectionSnapshot,
+  );
+}
+
+/** Read the store-owned in-progress vector path draft session (high-frequency channel). */
+export function useFigEditorVectorPathDraftSession(): VectorPathDraftSession | null {
+  const store = useRequiredFigEditorStore("useFigEditorVectorPathDraftSession");
+  return useSyncExternalStore(
+    store.subscribeVectorPathDraftSession,
+    store.getVectorPathDraftSessionSnapshot,
+    store.getVectorPathDraftSessionSnapshot,
+  );
+}
+
+/** Read a lag-free getter for the current vector path draft session, for use inside event handlers. */
+export function useFigEditorVectorPathDraftSessionReader(): () => VectorPathDraftSession | null {
+  return useRequiredFigEditorStore("useFigEditorVectorPathDraftSessionReader").getVectorPathDraftSessionSnapshot;
 }
 
 /**

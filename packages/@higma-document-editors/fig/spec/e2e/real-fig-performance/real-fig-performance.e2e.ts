@@ -109,6 +109,9 @@ test.describe("real fig editor performance", () => {
         webglCanvasPixelStats,
       );
       const pageSwitchEditPersistenceStats = await readRenderStats(page);
+      if (renderer === "webgl") {
+        await measureViewportZoom(page, webglCanvasPixelStats);
+      }
 
       const metrics: PerformanceMetrics = {
         renderer,
@@ -435,6 +438,65 @@ async function measureViewportPan(
   };
 }
 
+async function dispatchZoomWheelBurst(
+  page: Page,
+  point: { readonly x: number; readonly y: number },
+  steps: number,
+): Promise<void> {
+  // Dispatch the whole burst synchronously in one evaluate so React batches it
+  // into a single viewport change -> exactly one viewport-motion (scaled-blit)
+  // frame, with no idle settle interleaving between wheels. This makes the
+  // assertions deterministic instead of racing the requestIdleCallback settle.
+  await page.evaluate(({ x, y, steps: stepCount }) => {
+    const svg = document.querySelector("svg[aria-label='Editor canvas viewport']");
+    if (svg === null) {
+      throw new Error("viewport zoom requires the editor canvas viewport svg");
+    }
+    const isMac = navigator.platform.toUpperCase().includes("MAC");
+    for (let step = 0; step < stepCount; step += 1) {
+      svg.dispatchEvent(new WheelEvent("wheel", {
+        deltaY: -120,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: !isMac,
+        metaKey: isMac,
+      }));
+    }
+  }, { x: point.x, y: point.y, steps });
+}
+
+/**
+ * Validate the in-gesture zoom fast path: a wheel-zoom change must present a
+ * scaled blit of the cached settled frame (no full effect traversal), and a
+ * high-fidelity settled render must follow once the gesture settles.
+ */
+async function measureViewportZoom(
+  page: Page,
+  webglCanvasPixelStats: WebGLCanvasPixelStats[],
+): Promise<void> {
+  const before = await readRenderStats(page);
+  const center = await resolveEditorCanvasCenter(page);
+  await dispatchZoomWheelBurst(page, center, 6);
+  await expect.poll(
+    () => readRenderStats(page).then((stats) => stats.webglViewportMotionScaledBlitCount),
+    { timeout: 15_000, intervals: PERFORMANCE_POLL_INTERVALS_MS },
+  ).toBeGreaterThan(before.webglViewportMotionScaledBlitCount);
+  const duringZoomStats = await readRenderStats(page);
+  // The scaled blit bypasses the scene traversal entirely.
+  expect(duringZoomStats.webglLastViewportMotionRenderedNodeCount).toBe(0);
+  expect(duringZoomStats.webglLastViewportMotionEffectNodeCount).toBe(0);
+  // Once the wheel burst goes idle, the deferred high-fidelity settled render
+  // repaints effects at the final zoom.
+  await expect.poll(
+    () => readRenderStats(page).then((stats) => stats.webglSettledRenderCount),
+    { timeout: 15_000, intervals: PERFORMANCE_POLL_INTERVALS_MS },
+  ).toBeGreaterThan(before.webglSettledRenderCount);
+  await waitForRendererReady(page, "webgl");
+  webglCanvasPixelStats.push(await expectWebGLViewportCanvasPainted(page, "after viewport zoom settled WebGL viewport"));
+}
+
 function expectNoViewportPanStaticVertexBufferPreparation(before: RenderStats, after: RenderStats): void {
   if (after.webglPrepareCount === before.webglPrepareCount) {
     return;
@@ -553,6 +615,13 @@ async function measurePageSwitchEditPersistence(
   expect(requirePageSwitchEditTransformValue(translated.transformM12, "translated m12"))
     .toBeCloseTo(expectedTranslatedTransformValue(target.transformM12), 6);
   if (renderer === "webgl") {
+    const translatedStats = await readRenderStats(page);
+    // The single-node (node-content) edit must repaint only its changed region,
+    // not re-render the whole visible scene.
+    expect(translatedStats.webglCommittedContentRegionRedrawCount)
+      .toBeGreaterThan(beforeTranslateStats.webglCommittedContentRegionRedrawCount);
+    expect(translatedStats.webglLastRenderedNodeCount)
+      .toBeLessThan(beforeTranslateStats.webglLastRenderedNodeCount);
     webglCanvasPixelStats.push(await expectWebGLViewportCanvasPainted(page, "after page-switch document translate"));
   }
 
@@ -596,8 +665,13 @@ async function resolvePageSwitchEditTarget(page: Page): Promise<PageSwitchEditTa
     const activePageGuidKey = api.document.activePage().guidKey;
     const visibleBounds = api.canvas.visibleNodeBounds();
     const snapshots = visibleBounds.map((bounds) => api.document.requireNode(bounds.guidKey));
+    // Exclude component/variable types: editing those is a "reference-data"
+    // mutation that can affect other instances not listed in changedGuidKeys,
+    // so the renderer (correctly) cannot region-redraw them. A plain node /
+    // instance edit is "node-content", which exercises the content-region path.
+    const referenceDataTypes = new Set(["DOCUMENT", "CANVAS", "COMPONENT", "COMPONENT_SET", "SYMBOL", "VARIABLE", "VARIABLE_SET"]);
     const candidate = snapshots.find((snapshot) => {
-      if (snapshot.type === "DOCUMENT" || snapshot.type === "CANVAS") {
+      if (referenceDataTypes.has(snapshot.type)) {
         return false;
       }
       return snapshot.parentGuidKey !== undefined;
@@ -907,6 +981,8 @@ type RenderStats = {
   readonly webglSettledRenderCount: number;
   readonly webglLastSettledRenderMsMax: number;
   readonly webglViewportMotionRenderCount: number;
+  readonly webglViewportMotionScaledBlitCount: number;
+  readonly webglCommittedContentRegionRedrawCount: number;
   readonly webglLastViewportMotionRenderMsMax: number;
   readonly webglLastViewportMotionRenderedNodeCount: number;
   readonly webglLastViewportMotionEffectNodeCount: number;
@@ -1067,6 +1143,8 @@ async function readRenderStats(page: Page): Promise<RenderStats> {
     webglSettledRenderCount: metrics.reduce((sum, metric) => sum + metric.settledRenderCount, 0),
     webglLastSettledRenderMsMax: Math.max(0, ...metrics.map((metric) => metric.lastSettledRenderMs)),
     webglViewportMotionRenderCount: metrics.reduce((sum, metric) => sum + metric.viewportMotionRenderCount, 0),
+    webglViewportMotionScaledBlitCount: metrics.reduce((sum, metric) => sum + metric.viewportMotionScaledBlitCount, 0),
+    webglCommittedContentRegionRedrawCount: metrics.reduce((sum, metric) => sum + metric.committedContentRegionRedrawCount, 0),
     webglLastViewportMotionRenderMsMax: Math.max(0, ...metrics.map((metric) => metric.lastViewportMotionRenderMs)),
     webglLastViewportMotionRenderedNodeCount: metrics.reduce((sum, metric) => sum + metric.lastViewportMotionRenderedNodeCount, 0),
     webglLastViewportMotionEffectNodeCount: metrics.reduce((sum, metric) => sum + metric.lastViewportMotionEffectNodeCount, 0),

@@ -1,6 +1,9 @@
 /** @file Tests for WebGL viewport-motion redraw regions. */
 
-import { resolveViewportMotionRedrawRegion } from "./viewport-motion-redraw-region";
+import {
+  resolveScaledViewportMotionRedrawRegion,
+  resolveViewportMotionRedrawRegion,
+} from "./viewport-motion-redraw-region";
 
 describe("resolveViewportMotionRedrawRegion", () => {
   it("copies the overlapping framebuffer region and redraws newly exposed top and left strips", () => {
@@ -52,6 +55,46 @@ describe("resolveViewportMotionRedrawRegion", () => {
       previousViewport: { x: 0, y: 0, width: 100, height: 100 },
       currentViewport: { x: 100, y: 0, width: 100, height: 100 },
       surfaceWidth: 200,
+      surfaceHeight: 100,
+      pixelRatio: 1,
+    })).toBeNull();
+  });
+});
+
+describe("resolveScaledViewportMotionRedrawRegion", () => {
+  it("magnifies the cache sub-rect onto the full output when zooming in", () => {
+    expect(resolveScaledViewportMotionRedrawRegion({
+      previousViewport: { x: 0, y: 0, width: 100, height: 100 },
+      currentViewport: { x: 25, y: 25, width: 50, height: 50 },
+      surfaceWidth: 100,
+      surfaceHeight: 100,
+      pixelRatio: 1,
+    })).toEqual({
+      sourceRegion: { x: 25, y: 25, width: 50, height: 50 },
+      targetRegion: { x: 0, y: 0, width: 100, height: 100 },
+      needsBackgroundClear: false,
+    });
+  });
+
+  it("shrinks the whole cache toward the output centre and flags a clear when zooming out", () => {
+    expect(resolveScaledViewportMotionRedrawRegion({
+      previousViewport: { x: 25, y: 25, width: 50, height: 50 },
+      currentViewport: { x: 0, y: 0, width: 100, height: 100 },
+      surfaceWidth: 100,
+      surfaceHeight: 100,
+      pixelRatio: 1,
+    })).toEqual({
+      sourceRegion: { x: 0, y: 0, width: 100, height: 100 },
+      targetRegion: { x: 25, y: 25, width: 50, height: 50 },
+      needsBackgroundClear: true,
+    });
+  });
+
+  it("returns null when the zoomed viewport shares no area with the cache", () => {
+    expect(resolveScaledViewportMotionRedrawRegion({
+      previousViewport: { x: 0, y: 0, width: 10, height: 10 },
+      currentViewport: { x: 100, y: 100, width: 5, height: 5 },
+      surfaceWidth: 100,
       surfaceHeight: 100,
       pixelRatio: 1,
     })).toBeNull();

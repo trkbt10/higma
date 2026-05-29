@@ -182,3 +182,4 @@ AGENTS.md
 tmp/
 *.tmp.*
 packages/@higma-editor-kernel/ui/dev/dist-dev
+packages/@higma-document-editors/fig/test-results

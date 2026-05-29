@@ -17,6 +17,24 @@ import {
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
+  createFigEditorRenderProjection,
+  DEFAULT_FIG_RENDER_ENVIRONMENT,
+  type FigEditorRenderProjection,
+  type FigEditorRenderProjectionResolver,
+  type FigRenderEnvironment,
+} from "./fig-editor-render-projection";
+import type { ViewportRenderContext } from "../canvas/layout/viewport-render-region";
+import {
+  resolveCanvasInteractionPolicy,
+  type FigCanvasInteractionPolicy,
+} from "../canvas/interaction/interaction-policy";
+import {
+  applyVectorPathDraftOperation,
+  commitVectorPathDraftToNodeSpec,
+  type VectorPathDraftOperation,
+  type VectorPathDraftSession,
+} from "../vector-path/draft";
+import {
   createFigBuilderStateFromDocument,
   type FigBuilderState,
 } from "@higma-document-models/fig/builder";
@@ -141,6 +159,7 @@ export type FigEditorContextValue = {
   readonly selectedNodes: readonly FigNode[];
   readonly primaryNode: FigNode | undefined;
   readonly creationMode: FigCreationMode;
+  readonly policy: FigCanvasInteractionPolicy;
   readonly textEdit: FigTextEditState;
   readonly selectedFigNodeDragTransformActive: boolean;
   readonly selectedFigNodeDragTransform: FigEditorSelectedFigNodeDragTransform | null;
@@ -155,9 +174,14 @@ export type FigEditorContextValue = {
   readonly enterTextEdit: (guid: FigGuid) => void;
   readonly exitTextEdit: () => void;
   readonly setCanvasViewport: (snapshot: FigEditorCanvasViewportSnapshot | undefined) => void;
+  readonly setRenderEnvironment: (environment: FigRenderEnvironment) => void;
   readonly beginSelectedFigNodeDragTransform: () => void;
   readonly translateSelectedFigNodeDragTransform: (guid: FigGuid, dx: number, dy: number) => void;
   readonly endSelectedFigNodeDragTransform: () => void;
+  readonly beginMoveAt: (guid: FigGuid, point: { readonly x: number; readonly y: number }) => void;
+  readonly moveTo: (point: { readonly x: number; readonly y: number }) => void;
+  readonly endMove: () => void;
+  readonly applyVectorPathDraftOp: (operation: VectorPathDraftOperation, nextModeAfterCommit?: FigCreationMode) => void;
   readonly updateNode: (guid: FigGuid, updater: (node: FigNode) => FigNode, source: FigNodeMutationSource) => void;
   readonly updateNodeWithImages: (
     guid: FigGuid,
@@ -198,6 +222,10 @@ export type FigEditorStore = {
   readonly getSelectedFigNodeDragTransformSnapshot: () => FigEditorSelectedFigNodeDragTransform | null;
   readonly subscribeCanvasViewport: (listener: () => void) => () => void;
   readonly getCanvasViewportSnapshot: () => FigEditorCanvasViewportSnapshot | undefined;
+  readonly subscribeRenderProjection: (listener: () => void) => () => void;
+  readonly getRenderProjectionSnapshot: () => FigEditorRenderProjection;
+  readonly subscribeVectorPathDraftSession: (listener: () => void) => () => void;
+  readonly getVectorPathDraftSessionSnapshot: () => VectorPathDraftSession | null;
   readonly dispose: () => void;
 };
 
@@ -236,6 +264,10 @@ type FigEditorStoreState = {
   readonly selectedFigNodeDragTransformActive: boolean;
   readonly selectedFigNodeDragTransform: FigEditorSelectedFigNodeDragTransform | null;
   readonly canvasViewport: FigEditorCanvasViewportSnapshot | undefined;
+  /** DOM-measured render-environment inputs (font resolver, canvas overrides, hidden nodes). */
+  readonly renderEnvironment: FigRenderEnvironment;
+  /** In-progress pen-tool vector path draft (high-frequency; null when not drafting). */
+  readonly vectorPathDraftSession: VectorPathDraftSession | null;
   readonly selectedFigNodeDragUndoBaseContext: FigDocumentContext | null;
   readonly selectedFigNodeDragPublishedContextChange: boolean;
 };
@@ -571,6 +603,13 @@ function sameCanvasViewportSnapshot(
     left.renderedNodeBounds === right.renderedNodeBounds;
 }
 
+function sameRenderEnvironment(left: FigRenderEnvironment, right: FigRenderEnvironment): boolean {
+  return left.textFontResolver === right.textFontResolver &&
+    left.canvasWidthOverride === right.canvasWidthOverride &&
+    left.canvasHeightOverride === right.canvasHeightOverride &&
+    left.showHiddenNodes === right.showHiddenNodes;
+}
+
 function changesReferenceData(before: FigNode, after: FigNode): boolean {
   const beforeType = getNodeType(before);
   const afterType = getNodeType(after);
@@ -683,6 +722,8 @@ export function createFigEditorStore({
       selectedFigNodeDragTransformActive: false,
       selectedFigNodeDragTransform: null,
       canvasViewport: undefined,
+      renderEnvironment: DEFAULT_FIG_RENDER_ENVIRONMENT,
+      vectorPathDraftSession: null,
       selectedFigNodeDragUndoBaseContext: null,
       selectedFigNodeDragPublishedContextChange: false,
     },
@@ -690,6 +731,14 @@ export function createFigEditorStore({
   const listeners = new Set<() => void>();
   const selectedFigNodeDragTransformListeners = new Set<() => void>();
   const canvasViewportListeners = new Set<() => void>();
+  const vectorPathDraftSessionListeners = new Set<() => void>();
+  const renderProjectionListeners = new Set<() => void>();
+  const renderProjectionResolver: FigEditorRenderProjectionResolver = createFigEditorRenderProjection();
+  const renderProjectionRef = { value: null as FigEditorRenderProjection | null };
+  // Pointer-driven move session bookkeeping. Owned by the store so React only
+  // forwards world-space pointer positions; the begin/translate/end transitions
+  // and the threshold (no-op when the pointer has not moved) live here.
+  const moveSessionRef = { value: null as { guid: FigGuid; lastX: number; lastY: number; transformed: boolean } | null };
   const documentDerivedStateRef = { value: initialDerived };
   const editorSnapshotDeliveryRef: { value: FigEditorSnapshotDeliveryState } = {
     value: { scheduled: false, generation: 0 },
@@ -838,6 +887,7 @@ export function createFigEditorStore({
       selectedNodes,
       primaryNode: selectedNodes[0],
       creationMode: state.creationMode,
+      policy: resolveCanvasInteractionPolicy(state.creationMode),
       textEdit: state.textEdit,
       selectedFigNodeDragTransformActive: state.selectedFigNodeDragTransformActive,
       selectedFigNodeDragTransform: state.selectedFigNodeDragTransform,
@@ -852,9 +902,14 @@ export function createFigEditorStore({
       enterTextEdit,
       exitTextEdit,
       setCanvasViewport,
+      setRenderEnvironment,
       beginSelectedFigNodeDragTransform,
       translateSelectedFigNodeDragTransform,
       endSelectedFigNodeDragTransform,
+      beginMoveAt,
+      moveTo,
+      endMove,
+      applyVectorPathDraftOp,
       updateNode,
       updateNodeWithImages,
       updateSelectedNodes,
@@ -870,6 +925,62 @@ export function createFigEditorStore({
       undo,
       redo,
     };
+  }
+
+  function viewportMeasurementFromCanvasViewport(
+    canvasViewport: FigEditorCanvasViewportSnapshot | undefined,
+  ): ViewportRenderContext | null {
+    if (canvasViewport === undefined) {
+      return null;
+    }
+    return {
+      viewport: canvasViewport.viewport,
+      viewportSize: canvasViewport.viewportSize,
+      rulerThickness: canvasViewport.rulerThickness,
+    };
+  }
+
+  function buildRenderProjection(state: FigEditorStoreState): FigEditorRenderProjection {
+    const derived = documentDerivedState(state.currentContext);
+    const activePage = activePageForSnapshot(derived, state.activePageGuid);
+    return renderProjectionResolver.resolve({
+      page: activePage ?? null,
+      context: state.currentContext,
+      resources: derived.resources,
+      kiwiDocumentMutation: state.kiwiDocumentMutation,
+      selectedGuids: state.selectedGuids,
+      selectedFigNodeDragTransform: state.selectedFigNodeDragTransform,
+      environment: state.renderEnvironment,
+      viewportMeasurement: viewportMeasurementFromCanvasViewport(state.canvasViewport),
+    });
+  }
+
+  /**
+   * Recompute the renderer-facing projection (SceneGraph + bounds + translation
+   * + extents + render region) from current store state and notify the
+   * projection subscribers. Called after every commit that changes a projection
+   * input (document/selection, drag transform, viewport measurement,
+   * render environment) so React never re-derives any of it.
+   */
+  function refreshRenderProjection(): void {
+    // No-op until a consumer subscribes: the projection is rebuilt lazily in
+    // getRenderProjectionSnapshot. This keeps the projection machinery
+    // zero-overhead for stores whose renderer input is still derived elsewhere.
+    if (renderProjectionListeners.size === 0) {
+      renderProjectionRef.value = null;
+      return;
+    }
+    renderProjectionRef.value = buildRenderProjection(stateRef.value);
+    for (const listener of renderProjectionListeners) {
+      listener();
+    }
+  }
+
+  function getRenderProjectionSnapshot(): FigEditorRenderProjection {
+    if (renderProjectionRef.value === null) {
+      renderProjectionRef.value = buildRenderProjection(stateRef.value);
+    }
+    return renderProjectionRef.value;
   }
 
   const snapshotRef = { value: null as FigEditorContextValue | null };
@@ -970,6 +1081,12 @@ export function createFigEditorStore({
     }
   }
 
+  function notifyVectorPathDraftSessionListeners(): void {
+    for (const listener of vectorPathDraftSessionListeners) {
+      listener();
+    }
+  }
+
   function commitState(next: FigEditorStoreState, options?: CommitStateOptions): void {
     if (disposedRef.value) {
       throw new Error("FigEditorStore cannot be mutated after dispose");
@@ -979,6 +1096,7 @@ export function createFigEditorStore({
     const previousCanvasViewport = stateRef.value.canvasViewport;
     stateRef.value = next;
     snapshotRef.value = createSnapshot();
+    refreshRenderProjection();
     notifyEditorSnapshotListeners(delivery);
     if (previousSelectedFigNodeDragTransform !== next.selectedFigNodeDragTransform) {
       notifySelectedFigNodeDragTransformListeners();
@@ -996,6 +1114,7 @@ export function createFigEditorStore({
     stateRef.value = next;
     snapshotRef.value = snapshotWithSelectedFigNodeDragTransform(requireSnapshot(), next);
     if (previousSelectedFigNodeDragTransform !== next.selectedFigNodeDragTransform) {
+      refreshRenderProjection();
       notifySelectedFigNodeDragTransformListeners();
     }
   }
@@ -1008,6 +1127,7 @@ export function createFigEditorStore({
     stateRef.value = next;
     snapshotRef.value = snapshotWithCanvasViewport(requireSnapshot(), next);
     if (!sameCanvasViewportSnapshot(previousCanvasViewport, next.canvasViewport)) {
+      refreshRenderProjection();
       notifyCanvasViewportListeners();
     }
   }
@@ -1120,6 +1240,18 @@ export function createFigEditorStore({
     commitCanvasViewportState({ ...state, canvasViewport: snapshot });
   }
 
+  function setRenderEnvironment(environment: FigRenderEnvironment): void {
+    const state = stateRef.value;
+    if (sameRenderEnvironment(state.renderEnvironment, environment)) {
+      return;
+    }
+    // Render environment (font resolver, canvas overrides, hidden nodes) only
+    // affects the renderer-facing projection, not the editor snapshot — refresh
+    // the projection directly without a full snapshot notification.
+    stateRef.value = { ...state, renderEnvironment: environment };
+    refreshRenderProjection();
+  }
+
   function beginSelectedFigNodeDragTransform(): void {
     const state = stateRef.value;
     if (state.selectedFigNodeDragUndoBaseContext !== null && state.selectedFigNodeDragTransformActive) {
@@ -1177,6 +1309,66 @@ export function createFigEditorStore({
       selectedFigNodeDragTransformActive: false,
       selectedFigNodeDragTransform: null,
     });
+  }
+
+  function beginMoveAt(guid: FigGuid, point: { readonly x: number; readonly y: number }): void {
+    moveSessionRef.value = { guid, lastX: point.x, lastY: point.y, transformed: false };
+  }
+
+  function moveTo(point: { readonly x: number; readonly y: number }): void {
+    const session = moveSessionRef.value;
+    if (session === null) {
+      return;
+    }
+    const dx = point.x - session.lastX;
+    const dy = point.y - session.lastY;
+    if (dx === 0 && dy === 0) {
+      return;
+    }
+    if (!session.transformed) {
+      beginSelectedFigNodeDragTransform();
+    }
+    translateSelectedFigNodeDragTransform(session.guid, dx, dy);
+    moveSessionRef.value = { ...session, lastX: point.x, lastY: point.y, transformed: true };
+  }
+
+  function endMove(): void {
+    const session = moveSessionRef.value;
+    moveSessionRef.value = null;
+    if (session?.transformed === true) {
+      endSelectedFigNodeDragTransform();
+    }
+  }
+
+  function commitVectorPathDraftSessionState(next: FigEditorStoreState): void {
+    if (disposedRef.value) {
+      throw new Error("FigEditorStore cannot be mutated after dispose");
+    }
+    const previous = stateRef.value.vectorPathDraftSession;
+    stateRef.value = next;
+    if (previous !== next.vectorPathDraftSession) {
+      notifyVectorPathDraftSessionListeners();
+    }
+  }
+
+  /**
+   * Apply one pen-tool vector path draft operation. The draft session lives in
+   * the store; React only translates pointer/keyboard input into operations.
+   * High-frequency draft updates notify the dedicated draft-session channel
+   * (not the full editor snapshot); a completed draft commits to the active
+   * page and optionally switches creation mode.
+   */
+  function applyVectorPathDraftOp(operation: VectorPathDraftOperation, nextModeAfterCommit?: FigCreationMode): void {
+    const result = applyVectorPathDraftOperation(stateRef.value.vectorPathDraftSession, operation);
+    commitVectorPathDraftSessionState({ ...stateRef.value, vectorPathDraftSession: result.session });
+    if (result.committedDraft === undefined) {
+      return;
+    }
+    const spec = commitVectorPathDraftToNodeSpec(result.committedDraft);
+    addNodeToActivePage(spec, result.committedDraft.parentId, FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathCommit);
+    if (nextModeAfterCommit !== undefined) {
+      setCreationMode(nextModeAfterCommit);
+    }
   }
 
   function updateNode(
@@ -1700,11 +1892,42 @@ export function createFigEditorStore({
       return stateRef.value.canvasViewport;
     },
 
+    subscribeRenderProjection(listener): () => void {
+      if (disposedRef.value) {
+        throw new Error("FigEditorStore render projection cannot be subscribed after dispose");
+      }
+      renderProjectionListeners.add(listener);
+      return () => {
+        renderProjectionListeners.delete(listener);
+      };
+    },
+
+    getRenderProjectionSnapshot(): FigEditorRenderProjection {
+      return getRenderProjectionSnapshot();
+    },
+
+    subscribeVectorPathDraftSession(listener): () => void {
+      if (disposedRef.value) {
+        throw new Error("FigEditorStore vector path draft session cannot be subscribed after dispose");
+      }
+      vectorPathDraftSessionListeners.add(listener);
+      return () => {
+        vectorPathDraftSessionListeners.delete(listener);
+      };
+    },
+
+    getVectorPathDraftSessionSnapshot(): VectorPathDraftSession | null {
+      return stateRef.value.vectorPathDraftSession;
+    },
+
     dispose(): void {
       disposedRef.value = true;
       listeners.clear();
       selectedFigNodeDragTransformListeners.clear();
       canvasViewportListeners.clear();
+      renderProjectionListeners.clear();
+      vectorPathDraftSessionListeners.clear();
+      renderProjectionRef.value = null;
       snapshotRef.value = null;
     },
   };

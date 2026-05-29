@@ -170,6 +170,94 @@ function exposedViewportRegions({
   return regions;
 }
 
+export type ScaledViewportMotionRedrawRegion = {
+  readonly sourceRegion: WebGLEffectRenderRegion;
+  readonly targetRegion: WebGLEffectRenderRegion;
+  /**
+   * True when the current viewport extends beyond the cached frame (zoom-out
+   * reveals area the cached frame never covered). The caller must clear the
+   * output to the background before blitting, because the scaled blit only
+   * fills `targetRegion`; the remaining margin shows background until the
+   * deferred settled render repaints it at full fidelity.
+   */
+  readonly needsBackgroundClear: boolean;
+};
+
+function clampUnitInterval(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+/**
+ * Resolve a scaled-blit mapping that presents the cached settled frame at a
+ * changed viewport scale (zoom). The cached frame covers `previousViewport`
+ * stretched across the whole backing buffer; this maps the sub-rectangle of
+ * that cache which corresponds to the current (zoomed) viewport onto the
+ * output, magnifying or minifying it.
+ *
+ * Unlike the pan path this is intentionally lossy during the gesture — the
+ * caller must keep the original sharp cache and schedule a full settled
+ * render to restore fidelity once the gesture settles. Returns `null` when
+ * the current viewport shares no area with the cache (caller falls back to a
+ * full render).
+ */
+export function resolveScaledViewportMotionRedrawRegion(
+  input: ResolveViewportMotionRedrawRegionInput,
+): ScaledViewportMotionRedrawRegion | null {
+  requirePositiveFiniteNumber(input.previousViewport.width, "previous viewport width");
+  requirePositiveFiniteNumber(input.previousViewport.height, "previous viewport height");
+  requirePositiveFiniteNumber(input.currentViewport.width, "current viewport width");
+  requirePositiveFiniteNumber(input.currentViewport.height, "current viewport height");
+  requirePositiveFiniteNumber(input.surfaceWidth, "surface width");
+  requirePositiveFiniteNumber(input.surfaceHeight, "surface height");
+  requirePositiveFiniteNumber(input.pixelRatio, "pixelRatio");
+  const { previousViewport: previous, currentViewport: current } = input;
+  const backingWidth = Math.round(input.surfaceWidth * input.pixelRatio);
+  const backingHeight = Math.round(input.surfaceHeight * input.pixelRatio);
+
+  // Current-viewport edges expressed as cache-space unit coordinates
+  // (top-down: u along x, v along y), where [0,1] spans the cached frame.
+  const u0 = (current.x - previous.x) / previous.width;
+  const u1 = (current.x + current.width - previous.x) / previous.width;
+  const v0 = (current.y - previous.y) / previous.height;
+  const v1 = (current.y + current.height - previous.y) / previous.height;
+
+  const cu0 = clampUnitInterval(u0);
+  const cu1 = clampUnitInterval(u1);
+  const cv0 = clampUnitInterval(v0);
+  const cv1 = clampUnitInterval(v1);
+  if (cu1 <= cu0 || cv1 <= cv0) {
+    return null;
+  }
+
+  // Source sub-rect of the cached backing buffer (bottom-left scissor space).
+  const srcLeft = Math.round(cu0 * backingWidth);
+  const srcRight = Math.round(cu1 * backingWidth);
+  const srcBottom = Math.round(backingHeight - cv1 * backingHeight);
+  const srcTop = Math.round(backingHeight - cv0 * backingHeight);
+
+  // Target sub-rect of the output: where the clamped cache region lands once
+  // the full current viewport is stretched across the output backing buffer.
+  const uSpan = u1 - u0;
+  const vSpan = v1 - v0;
+  const tu0 = (cu0 - u0) / uSpan;
+  const tu1 = (cu1 - u0) / uSpan;
+  const tv0 = (cv0 - v0) / vSpan;
+  const tv1 = (cv1 - v0) / vSpan;
+  const tgtLeft = Math.round(tu0 * backingWidth);
+  const tgtRight = Math.round(tu1 * backingWidth);
+  const tgtBottom = Math.round(backingHeight - tv1 * backingHeight);
+  const tgtTop = Math.round(backingHeight - tv0 * backingHeight);
+  if (srcRight <= srcLeft || srcTop <= srcBottom || tgtRight <= tgtLeft || tgtTop <= tgtBottom) {
+    return null;
+  }
+
+  return {
+    sourceRegion: effectRegionFromEdges({ left: srcLeft, bottom: srcBottom, right: srcRight, top: srcTop }),
+    targetRegion: effectRegionFromEdges({ left: tgtLeft, bottom: tgtBottom, right: tgtRight, top: tgtTop }),
+    needsBackgroundClear: cu0 > u0 || cu1 < u1 || cv0 > v0 || cv1 < v1,
+  };
+}
+
 /** Resolve framebuffer copy and redraw regions for a viewport-only pan. */
 export function resolveViewportMotionRedrawRegion(
   input: ResolveViewportMotionRedrawRegionInput,
