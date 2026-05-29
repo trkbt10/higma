@@ -190,16 +190,81 @@ function framePathSurfaceToRectStrokeShape(node: FrameNode): StrokeShape | undef
     return undefined;
   }
   const radii = roundedRectRadiiFromPathClip(node.surfaceShape, node.width, node.height);
-  if (radii === undefined) {
-    return undefined;
+  if (radii !== undefined) {
+    return {
+      kind: "rect",
+      width: node.width,
+      height: node.height,
+      cornerRadius: radii,
+      cornerSmoothing: node.cornerSmoothing,
+    };
   }
-  return {
-    kind: "rect",
-    width: node.width,
-    height: node.height,
-    cornerRadius: radii,
-    cornerSmoothing: node.cornerSmoothing,
-  };
+  // Sharp-cornered frames (e.g. a footer cell, a reused INSTANCE rendered
+  // as a frame) carry their surface as a plain four-edge rectangle path,
+  // which the rounded-rect recognizer above rejects. Recognise the
+  // axis-aligned sharp rectangle too so INSIDE/OUTSIDE strokes route
+  // through the inset/outset-rect emitter — a single-width stroke placed
+  // fully inside/outside the edge — instead of the doubled-width + mask
+  // fallback, whose mask resvg does not clip reliably (leaving the border
+  // ~1px outside Figma's exported 1px-inside band).
+  if (axisAlignedSharpRectFromPathClip(node.surfaceShape, node.width, node.height)) {
+    return {
+      kind: "rect",
+      width: node.width,
+      height: node.height,
+      cornerRadius: undefined,
+      cornerSmoothing: node.cornerSmoothing,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Whether a path clip is an axis-aligned sharp rectangle spanning
+ * (0,0)–(width,height): a single closed subpath of four `L`-joined
+ * corners, each sitting on a rect corner, covering all four corners.
+ * An explicit line-to-start closing vertex is tolerated.
+ */
+function axisAlignedSharpRectFromPathClip(
+  clip: Extract<ClipShape, { readonly type: "path" }>,
+  width: number,
+  height: number,
+): boolean {
+  const contour = clip.contours.length === 1 ? clip.contours[0] : undefined;
+  if (contour === undefined) {
+    return false;
+  }
+  let commands = commandsWithoutClosingSegment(contour.commands);
+  const head = commands[0];
+  const tail = commands[commands.length - 1];
+  if (
+    commands.length === 5 &&
+    head?.type === "M" &&
+    tail?.type === "L" &&
+    nearlyEqual(head.x, tail.x) &&
+    nearlyEqual(head.y, tail.y)
+  ) {
+    commands = commands.slice(0, -1);
+  }
+  if (commands.length !== 4 || commands[0]?.type !== "M") {
+    return false;
+  }
+  if (commands.slice(1).some((command) => command.type !== "L")) {
+    return false;
+  }
+  const corners = new Set<string>();
+  for (const command of commands) {
+    if (command.type !== "M" && command.type !== "L") {
+      return false;
+    }
+    const onX = nearlyEqual(command.x, 0) ? "L" : nearlyEqual(command.x, width) ? "R" : undefined;
+    const onY = nearlyEqual(command.y, 0) ? "T" : nearlyEqual(command.y, height) ? "B" : undefined;
+    if (onX === undefined || onY === undefined) {
+      return false;
+    }
+    corners.add(onX + onY);
+  }
+  return corners.size === 4;
 }
 
 function collectStrokeLayerGradientDefs(
