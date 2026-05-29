@@ -113,7 +113,11 @@ function isVisible(node: FigNode): boolean {
 
 function hasExplicitAutoLayout(node: FigNode): boolean {
   const m = node.stackMode?.name;
-  return m === "VERTICAL" || m === "HORIZONTAL";
+  // GRID is an explicit auto-layout too: the style emitter translates
+  // it directly to CSS Grid, so clustering its children into synthetic
+  // row-groups (the fallback for non-auto-layout 2-D arrangements)
+  // would wrap each grid row in a flex container and defeat the grid.
+  return m === "VERTICAL" || m === "HORIZONTAL" || m === "GRID";
 }
 
 type Axis = "y" | "x";

@@ -1538,6 +1538,10 @@ export type FigNode = {
   readonly gridColumnsSizing?: FigGridTrackPositions;
   /** CSS-grid row sizing map, Kiwi field `gridRowsSizing`. */
   readonly gridRowsSizing?: FigGridTrackPositions;
+  /** GRID auto-layout inter-column gap in px, Kiwi field `gridColumnGap`. */
+  readonly gridColumnGap?: number;
+  /** GRID auto-layout inter-row gap in px, Kiwi field `gridRowGap`. */
+  readonly gridRowGap?: number;
 
   // ---- AutoLayout (child-level) ----
   /** Schema `NodeChange.stackPositioning` → `StackPositioning` (typeId 40). */
@@ -1554,6 +1558,14 @@ export type FigNode = {
   readonly stackChildAlignSelf?: KiwiEnumValue<StackCounterAlign>;
   /** AutoLayout child primary-axis grow factor (0 = fixed, 1 = fill container) */
   readonly stackChildPrimaryGrow?: number;
+  /** GRID child horizontal cell alignment, Kiwi field `gridChildHorizontalAlign`. Defaults to STRETCH when absent. */
+  readonly gridChildHorizontalAlign?: "MIN" | "CENTER" | "MAX" | "STRETCH";
+  /** GRID child vertical cell alignment, Kiwi field `gridChildVerticalAlign`. Defaults to STRETCH when absent. */
+  readonly gridChildVerticalAlign?: "MIN" | "CENTER" | "MAX" | "STRETCH";
+  /** GRID child column span (cells), Kiwi field `gridColumnSpan`. Defaults to 1 when absent. */
+  readonly gridColumnSpan?: number;
+  /** GRID child row span (cells), Kiwi field `gridRowSpan`. Defaults to 1 when absent. */
+  readonly gridRowSpan?: number;
 
   // ---- Boolean operation ----
   /** Schema `NodeChange.booleanOperation` → `BooleanOperation` (typeId 20). */

@@ -31,11 +31,13 @@
 import type {
   FigEffect,
   FigEffectType,
+  FigGridTrackPositions,
   FigNode,
   FigStrokeAlign,
   FigStrokeWeight,
   FigValueWithUnits,
 } from "@higma-document-models/fig/types";
+import { interpretGridTrackSize } from "@higma-document-models/fig/symbols";
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { buildCssFontFamily, detectWeight } from "@higma-document-models/fig/font";
@@ -168,7 +170,7 @@ function hasEllipseArc(node: FigNode): boolean {
 export type RootMode = "page-root" | "component-root";
 
 /** Layout regime the parent imposes on this node. */
-export type ParentLayout = "flex-row" | "flex-column" | "static" | "none";
+export type ParentLayout = "flex-row" | "flex-column" | "grid" | "static" | "none";
 
 /** Per-child sizing along a flex axis, mirroring Figma's stack sizing enum. */
 type AxisSizing = "fixed" | "fill" | "hug";
@@ -312,6 +314,9 @@ export function parentLayoutOf(parent: FigNode | undefined): ParentLayout {
   if (stackMode === "HORIZONTAL") {
     return "flex-row";
   }
+  if (stackMode === "GRID") {
+    return "grid";
+  }
   return "static";
 }
 
@@ -338,7 +343,7 @@ export function nodeNeedsPositioningContext(
   if (isVectorOnlyContainer(node, childrenOf)) {
     return false;
   }
-  const isRealFlex = node.stackMode?.name === "VERTICAL" || node.stackMode?.name === "HORIZONTAL";
+  const isRealFlex = node.stackMode?.name === "VERTICAL" || node.stackMode?.name === "HORIZONTAL" || node.stackMode?.name === "GRID";
   // For real or inferred flex/inset layouts, children flow — no
   // descendant of THIS node will need `position: absolute` unless a
   // child opted out with `stackPositioning === "ABSOLUTE"`.
@@ -366,7 +371,7 @@ export function nodeNeedsPositioningContext(
  * `stackPositioning === "ABSOLUTE"`.
  */
 function childFlowsInParent(parent: ParentLayout, child: FigNode): boolean {
-  if (parent !== "flex-row" && parent !== "flex-column") {
+  if (parent !== "flex-row" && parent !== "flex-column" && parent !== "grid") {
     return false;
   }
   return child.stackPositioning?.name !== "ABSOLUTE";
@@ -411,6 +416,10 @@ function applyChildSizing(
   parentContext: ParentContext | undefined,
   textBound: boolean,
 ): void {
+  if (parent === "grid") {
+    applyGridChildSizing(node, style);
+    return;
+  }
   const primary = axisSizingFrom(node.stackPrimarySizing?.name);
   const counter = axisSizingFrom(node.stackCounterSizing?.name);
   const isRow = parent === "flex-row";
@@ -438,6 +447,78 @@ function applyChildSizing(
   const align = childAlignSelfCss(node.stackChildAlignSelf?.name);
   if (align) {
     style.alignSelf = align;
+  }
+}
+
+/**
+ * Sizing for a child of a CSS-grid parent (Figma `stackMode === GRID`).
+ *
+ * A grid item is auto-placed into the next cell (the source order is
+ * row-major, matching Figma's authored reading order) and, by CSS
+ * default, stretches to fill that cell on both axes. Figma's GRID
+ * child alignment is `gridChildHorizontalAlign` /
+ * `gridChildVerticalAlign` (MIN / CENTER / MAX / STRETCH), defaulting
+ * to STRETCH when absent.
+ *
+ *   - STRETCH → emit no explicit size on that axis so the item fills
+ *     the track. The authored `size` is only a snapshot of the cell
+ *     it currently occupies; pinning it would re-introduce the gap a
+ *     wider track leaves (a card image slot sized 340 in a 374 cell).
+ *   - MIN / CENTER / MAX → the item keeps its authored size and is
+ *     placed at the cell edge / centre via `justify-self` /
+ *     `align-self`.
+ *
+ * Multi-cell spans map to `grid-column: span N` / `grid-row: span N`.
+ */
+function applyGridChildSizing(node: FigNode, style: Record<string, string>): void {
+  applyGridChildAxis(node, "width", node.gridChildHorizontalAlign, style);
+  applyGridChildAxis(node, "height", node.gridChildVerticalAlign, style);
+  const colSpan = node.gridColumnSpan;
+  if (typeof colSpan === "number" && colSpan > 1) {
+    style.gridColumn = `span ${colSpan}`;
+  }
+  const rowSpan = node.gridRowSpan;
+  if (typeof rowSpan === "number" && rowSpan > 1) {
+    style.gridRow = `span ${rowSpan}`;
+  }
+}
+
+function applyGridChildAxis(
+  node: FigNode,
+  axis: "width" | "height",
+  align: "MIN" | "CENTER" | "MAX" | "STRETCH" | undefined,
+  style: Record<string, string>,
+): void {
+  const cssAlign = gridChildAlignToCss(align);
+  if (cssAlign === "stretch") {
+    // Default grid stretch fills the track; no explicit size.
+    return;
+  }
+  const selfProp = axis === "width" ? "justifySelf" : "alignSelf";
+  style[selfProp] = cssAlign;
+  if (node.size) {
+    style[axis] = formatPx(axis === "width" ? node.size.x : node.size.y);
+  }
+}
+
+/**
+ * Translate Figma's GRID child alignment to the CSS `justify-self` /
+ * `align-self` keyword. Absent alignment defaults to STRETCH (Figma's
+ * grid-cell default).
+ */
+function gridChildAlignToCss(
+  align: "MIN" | "CENTER" | "MAX" | "STRETCH" | undefined,
+): "stretch" | "start" | "center" | "end" {
+  switch (align) {
+    case "MIN":
+      return "start";
+    case "CENTER":
+      return "center";
+    case "MAX":
+      return "end";
+    case "STRETCH":
+    case undefined:
+      return "stretch";
   }
 }
 
@@ -504,11 +585,29 @@ function canDropCounterDim(
   axis: "width" | "height",
   parentContext: ParentContext | undefined,
 ): boolean {
-  void node;
   if (!parentContext) {
     return false;
   }
-  if (parentContext.alignItems !== "stretch") {
+  // A child stretches on the counter axis when its own
+  // `stackChildAlignSelf` is STRETCH, or — absent a per-child override
+  // — when the parent's `align-items` is stretch. The per-child value
+  // wins over the parent default (CSS `align-self` semantics): a
+  // STRETCH child inside a MIN / CENTER / MAX parent still fills the
+  // container's inner counter axis, so its authored FIXED counter
+  // dimension is redundant. Keeping it actively breaks the stretch —
+  // an explicit `width`/`height` wins over `align-self: stretch` and
+  // pins the child to its SYMBOL-authored size even when the INSTANCE
+  // renders wider (a card image slot authored 340 inside a 374-wide
+  // cell leaves a 34px gap on its right edge). A child that explicitly
+  // opts OUT (MIN/CENTER/MAX) keeps its size so the browser knows
+  // where the non-stretched box ends. The `value ≈ parentContent`
+  // guard below confines the drop to children whose authored size
+  // already matched the SYMBOL content box, so the stretch reproduces
+  // the authored size at the SYMBOL's own width and only adapts when
+  // the INSTANCE is genuinely wider.
+  const childAlign = childAlignSelfCss(node.stackChildAlignSelf?.name);
+  const effectiveAlign = childAlign ?? parentContext.alignItems;
+  if (effectiveAlign !== "stretch") {
     return false;
   }
   const parentCounterValue = pickParentCounter(parentContext.content, axis);
@@ -1162,6 +1261,20 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
     return;
   }
 
+  // Figma rasterises text with grayscale anti-aliasing — the same mode
+  // resvg uses when it rasterises the authoritative SVG export's
+  // outlined glyphs. Chrome on macOS defaults to a heavier
+  // subpixel/`auto` smoothing that renders the very same Noto Sans JP
+  // 700 face ~10% heavier (measurably more ink per glyph), so the React
+  // text reads visibly bolder than the design and every glyph body —
+  // not just its edge — diverges from the export. Pinning grayscale
+  // smoothing aligns the rendered stroke weight with Figma's. These
+  // properties only affect the smoothing *mode*, never layout, so they
+  // are safe on every TEXT span. (`-moz-osx-font-smoothing` is the
+  // Firefox/macOS partner of the WebKit property.)
+  style.WebkitFontSmoothing = "antialiased";
+  style.MozOsxFontSmoothing = "grayscale";
+
   // When this TEXT will receive `width: auto` (because an INSTANCE
   // can override its characters at runtime — see
   // `textAutoResizesAxis`), force `white-space: nowrap` so a longer
@@ -1406,17 +1519,42 @@ function explicitPixelLineHeight(node: FigNode): number | undefined {
 
 /**
  * Read Figma's pre-baked rendered line height (in CSS pixels) from
- * `derivedTextData.baselines[0].lineHeight`. This is the value the SVG
- * renderer uses as the line-box for path placement; mirroring it on
- * the React side keeps the first baseline aligned with the renderer's
- * even for the canonical `100% PERCENT` line-height stored on every
- * TEXT node in the YouTube fixture.
+ * `derivedTextData.baselines`.
+ *
+ * For MULTI-line text the authoritative per-line stride is the
+ * baseline-to-baseline delta (`baselines[i+1].lineY -
+ * baselines[i].lineY`). Figma's `baselines[0].lineHeight` reports the
+ * line *box* height, which is `max(authored line-height, the font's
+ * natural line box)` — NOT the stride. When the author packs lines
+ * tighter than the font's natural box (a 56 px Noto Sans JP heading at
+ * a 1.2 multiplier renders a 67 px stride while the natural box is
+ * 81 px), using the box height spreads every line apart and pushes the
+ * whole block downward by the accumulated leading. The lineY delta is
+ * what Figma actually rasterised at, so prefer it whenever a second
+ * baseline exists.
+ *
+ * For SINGLE-line text there is no stride; fall back to
+ * `baselines[0].lineHeight` (the line box height). This is the value
+ * the SVG renderer uses as the line-box for path placement and keeps
+ * the first baseline aligned with the renderer's even for the
+ * canonical `100% PERCENT` line-height stored on every TEXT node in
+ * the YouTube fixture. The caller clamps it to the stored bounds.
  */
-function readDerivedBaselineLineHeight(node: FigNode): number | undefined {
-  const dtd = (node as { readonly derivedTextData?: { readonly baselines?: ReadonlyArray<{ readonly lineHeight?: number }> } }).derivedTextData;
+export function readDerivedBaselineLineHeight(node: FigNode): number | undefined {
+  const dtd = (node as { readonly derivedTextData?: { readonly baselines?: ReadonlyArray<{ readonly lineHeight?: number; readonly lineY?: number }> } }).derivedTextData;
   const baselines = dtd?.baselines;
   if (!baselines || baselines.length === 0) {
     return undefined;
+  }
+  if (baselines.length >= 2) {
+    const y0 = baselines[0]?.lineY;
+    const y1 = baselines[1]?.lineY;
+    if (typeof y0 === "number" && typeof y1 === "number") {
+      const stride = y1 - y0;
+      if (stride > 0) {
+        return stride;
+      }
+    }
   }
   const lh = baselines[0]?.lineHeight;
   if (typeof lh !== "number" || lh <= 0) {
@@ -1581,6 +1719,10 @@ function applyOwnLayoutMode(
     applyExplicitStack(node, index, stackMode, style, childrenOf);
     return;
   }
+  if (stackMode === "GRID") {
+    applyExplicitGrid(node, index, style, childrenOf);
+    return;
+  }
   if (inferred?.direction === "row" || inferred?.direction === "column") {
     applyInferredStack(inferred, index, style);
     return;
@@ -1661,6 +1803,99 @@ function applyExplicitStack(
   if (node.stackWrap?.name === "WRAP") {
     style.flexWrap = "wrap";
   }
+}
+
+/**
+ * Emit CSS Grid for a frame whose `stackMode === GRID`. Figma's GRID
+ * auto-layout carries explicit column / row track sizing
+ * (`gridColumnsSizing` / `gridRowsSizing`), per-axis gaps
+ * (`gridColumnGap` / `gridRowGap`), and frame padding. Children are
+ * auto-placed row-major in source order (see `applyGridChildSizing`).
+ *
+ * The track translation is the SoT mirror of Figma's grid sizing
+ * enum: FLEX → `minmax(0, Nfr)` (equal-share columns that still let
+ * wide content shrink rather than overflow the track), FIXED → px,
+ * and HUG / AUTO / RESIZE_TO_FIT → `auto` (content-sized track).
+ */
+function applyExplicitGrid(
+  node: FigNode,
+  index: TokenIndex,
+  style: Record<string, string>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
+  if (node.type.name === "INSTANCE") {
+    return;
+  }
+  if (!hasFlowableChildren(node, childrenOf)) {
+    return;
+  }
+  style.display = "grid";
+  const columns = gridTrackListCss(node.gridColumnsSizing);
+  if (columns) {
+    style.gridTemplateColumns = columns;
+  }
+  const rows = gridTrackListCss(node.gridRowsSizing);
+  if (rows) {
+    style.gridTemplateRows = rows;
+  }
+
+  const padding = collapsePadding(node, index);
+  if (padding) {
+    style.padding = padding;
+  }
+
+  // Figma stores GRID gaps in dedicated `gridColumnGap` / `gridRowGap`
+  // fields (the same SoT the `autolayout-solver` reads); `stackSpacing`
+  // is the legacy single-axis fallback. Collapse to the `gap`
+  // shorthand when both axes match.
+  const columnGap = node.gridColumnGap ?? node.stackSpacing;
+  const rowGap = node.gridRowGap ?? node.stackSpacing;
+  if (typeof rowGap === "number" && typeof columnGap === "number" && rowGap === columnGap) {
+    if (rowGap > 0) {
+      style.gap = spacingValue(rowGap, index);
+    }
+  } else {
+    if (typeof rowGap === "number" && rowGap > 0) {
+      style.rowGap = spacingValue(rowGap, index);
+    }
+    if (typeof columnGap === "number" && columnGap > 0) {
+      style.columnGap = spacingValue(columnGap, index);
+    }
+  }
+}
+
+/**
+ * Translate a `FigGridTrackPositions` sizing map into a CSS
+ * `grid-template-columns` / `grid-template-rows` track list. Returns
+ * `undefined` when no track entries are present (the grid then relies
+ * on implicit auto tracks).
+ */
+function gridTrackListCss(sizing: FigGridTrackPositions | undefined): string | undefined {
+  const entries = sizing?.entries;
+  if (!entries || entries.length === 0) {
+    return undefined;
+  }
+  return entries.map((entry) => gridTrackToCss(entry.trackSize)).join(" ");
+}
+
+function gridTrackToCss(trackSize: unknown): string {
+  const size = interpretGridTrackSize(trackSize);
+  const max = size?.maxSizing;
+  const min = size?.minSizing;
+  if (max?.type === "FIXED") {
+    return formatPx(max.value);
+  }
+  if (min?.type === "FIXED") {
+    return formatPx(min.value);
+  }
+  if (max?.type === "FLEX") {
+    return `minmax(0, ${Math.max(0, max.value)}fr)`;
+  }
+  if (min?.type === "FLEX") {
+    return `minmax(0, ${Math.max(0, min.value)}fr)`;
+  }
+  // AUTO / RESIZE_TO_FIT / HUG / absent — content-sized track.
+  return "auto";
 }
 
 function applyInferredStack(

@@ -25,7 +25,7 @@
  */
 import { kiwiEnumName } from "../constants";
 
-export type FigGridTrackSizingType = "FLEX" | "FIXED" | "AUTO" | "RESIZE_TO_FIT";
+export type FigGridTrackSizingType = "FLEX" | "FIXED" | "AUTO" | "HUG" | "RESIZE_TO_FIT";
 
 export type FigGridTrackAxisSize = {
   readonly type: FigGridTrackSizingType;
@@ -41,6 +41,7 @@ const VALID_TYPES: ReadonlySet<FigGridTrackSizingType> = new Set([
   "FLEX",
   "FIXED",
   "AUTO",
+  "HUG",
   "RESIZE_TO_FIT",
 ]);
 

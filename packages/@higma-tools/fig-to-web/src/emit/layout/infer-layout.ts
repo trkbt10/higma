@@ -149,7 +149,7 @@ function isVisible(node: FigNode): boolean {
 
 function hasExplicitAutoLayout(node: FigNode): boolean {
   const m = node.stackMode?.name;
-  return m === "VERTICAL" || m === "HORIZONTAL";
+  return m === "VERTICAL" || m === "HORIZONTAL" || m === "GRID";
 }
 
 /**

@@ -2,6 +2,17 @@
 
 export { resolveConstraintAxis } from "./constraint-axis";
 
+// GRID track sizing — SoT for interpreting the Kiwi `GridTrackSize`
+// payload that hangs off each `FigGridTrackPositions` entry.
+export {
+  interpretGridTrackSize,
+  resolveTrackSize,
+  computeFlexShare,
+  type FigGridTrackSize,
+  type FigGridTrackAxisSize,
+  type FigGridTrackSizingType,
+} from "./grid-track-size";
+
 export {
   getConstraintValue,
   resolveChildConstraints,
