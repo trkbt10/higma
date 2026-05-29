@@ -365,7 +365,7 @@ function expandFourSides(parts: readonly string[]): readonly [string, string, st
  * style emit never contains a literal underscore in CSS values.
  */
 function escapeArbitraryValue(value: string): string {
-  return value.replace(/\s+/g, "_");
+  return value.replace(/"/g, "'").replace(/\s+/g, "_");
 }
 
 /**

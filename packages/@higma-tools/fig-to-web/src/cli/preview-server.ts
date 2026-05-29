@@ -39,7 +39,7 @@
  * so the directory fills in on demand and can be inspected afterwards.
  */
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, extname, resolve } from "node:path";
+import { dirname, extname, resolve, sep } from "node:path";
 
 import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import type { FigNode } from "@higma-document-models/fig/types";
@@ -107,7 +107,7 @@ function contentTypeFor(path: string): string {
 function isInside(root: string, candidate: string): boolean {
   const r = resolve(root);
   const c = resolve(candidate);
-  return c === r || c.startsWith(`${r}/`);
+  return c === r || c.startsWith(`${r}${sep}`);
 }
 
 /**

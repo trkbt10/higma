@@ -125,7 +125,7 @@ function imagePaintCss(paint: FigImagePaint, resolver: ImageResolver): string | 
   if (!url) {
     return undefined;
   }
-  return `url(${JSON.stringify(url)})`;
+  return `url('${url.replace(/'/g, "\\'")}')`;
 }
 
 function imageScaleMode(paint: FigImagePaint): ScaleMode {
