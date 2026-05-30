@@ -532,8 +532,19 @@ function emitVariantCase(
   // centered text against a rounded background. Reusing
   // `emitFrameJsx` keeps the variant case in lockstep with every
   // other "wrap a single root frame in a `<div>`" call site.
+  // Nested instances inside this variant derive their `--lqd-down`
+  // scale from `context.designWidth`. The outer `context` was built
+  // from the variant SET node, whose width can differ from THIS
+  // variant case (e.g. a 72-wide set whose `Default` case is 32). The
+  // body below is liquefied against `variantNode.size.x`, so the
+  // nested instances must scale against the same width — otherwise
+  // they over-shrink (and the error compounds through nested
+  // variants: an icon inside a button inside the case ends up a
+  // fraction of its intended size).
+  const variantContext: EmitContext =
+    variantNode.size?.x === context.designWidth ? context : { ...context, designWidth: variantNode.size?.x };
   const rawFrameNode = liquefyRoot(
-    emitFrameJsx(variantNode, context, "component-root"),
+    emitFrameJsx(variantNode, variantContext, "component-root"),
     variantNode,
     context.layoutSizing,
     "component-root",

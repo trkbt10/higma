@@ -22,7 +22,7 @@ export type ImageAsset = {
 };
 
 export type ImageRegistry = {
-  /** Resolve a paint to a relative asset URL, or undefined when missing. */
+  /** Resolve a paint to a root-absolute asset URL (`/assets/…`), or undefined when missing. */
   readonly resolve: (paint: FigImagePaint) => string | undefined;
   /** Snapshot of every asset that was actually referenced. */
   readonly collected: () => readonly ImageAsset[];
@@ -74,7 +74,12 @@ export function createImageRegistry(images: ReadonlyMap<string, FigPackageImage>
       if (!collected.has(ref)) {
         collected.set(ref, { path, bytes: image.data });
       }
-      return `./${path}`;
+      // Root-absolute, not document-relative: a standalone page lives
+      // three directories deep (`pages/<canvas>/<slug>/`) while assets are
+      // written once at the output root. `./assets/…` would resolve under
+      // the page directory and 404 from any served depth; `/assets/…`
+      // resolves from the served root at every page depth.
+      return `/${path}`;
     },
     collected: () => [...collected.values()],
   };

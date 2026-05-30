@@ -170,7 +170,7 @@ function buildImagePaintScene(paintTransform: FigMatrix): {
 function makeImagePaintOpts(): EmitOpts {
   return {
     ...makeOpts(),
-    imageResolver: () => "./assets/test.png",
+    imageResolver: () => "/assets/test.png",
   };
 }
 
@@ -197,7 +197,7 @@ describe("emitPageFile — image paint with rotated transform falls back to stru
       throw new Error(`expected emit to produce ${target.filePath}`);
     }
     // A structural <img> must appear with the resolved asset URL.
-    expect(page.contents).toContain('<img src="./assets/test.png"');
+    expect(page.contents).toContain('<img src="/assets/test.png"');
     // ... carrying the CSS matrix transform with rotation components.
     expect(page.contents).toMatch(/transform:\s*"matrix\(/);
     // The container has been promoted to a positioning context and
@@ -228,8 +228,8 @@ describe("emitPageFile — image paint with rotated transform falls back to stru
     if (!page) {
       throw new Error(`expected emit to produce ${target.filePath}`);
     }
-    expect(page.contents).toContain('backgroundImage: "url(\\"./assets/test.png\\")"');
-    expect(page.contents).not.toMatch(/<img\s+src="\.\/assets\/test\.png"/);
+    expect(page.contents).toContain("backgroundImage: \"url('/assets/test.png')\"");
+    expect(page.contents).not.toMatch(/<img\s+src="\/assets\/test\.png"/);
   });
 });
 

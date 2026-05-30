@@ -10,8 +10,8 @@
  *
  * Image paints are special: they reference a binary asset by hash and
  * need a URL to resolve to. The orchestrator passes an
- * `ImageResolver` here that returns a stable file path
- * (`./assets/<hash>.<ext>`) and writes the bytes to disk on the side.
+ * `ImageResolver` here that returns a stable root-absolute URL
+ * (`/assets/<hash>.<ext>`) and writes the bytes to disk on the side.
  *
  * Gradient angle and stop interpretation is delegated to the renderer
  * paint SoT so CSS emission does not re-derive Kiwi transform semantics.

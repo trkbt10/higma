@@ -31,12 +31,12 @@ function makeNode(localID: number, name: string): FigNode {
 }
 
 describe("createIconRegistry", () => {
-  it("returns ./assets/icons/<slug>.svg on first register and dedupes on guid", () => {
+  it("returns /assets/icons/<slug>.svg on first register and dedupes on guid", () => {
     const registry = createIconRegistry();
     const node = makeNode(1, "Star Icon");
     const first = registry.register(node, "<svg/>");
     const second = registry.register(node, "<svg>different</svg>");
-    expect(first).toBe("./assets/icons/star-icon.svg");
+    expect(first).toBe("/assets/icons/star-icon.svg");
     expect(second).toBe(first);
     const assets = registry.collected();
     expect(assets.length).toBe(1);

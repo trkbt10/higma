@@ -39,7 +39,7 @@ function imagePaint(transform: FigImagePaint["transform"] | undefined): FigPaint
 }
 
 function pinResolver(): (paint: FigImagePaint) => string {
-  return () => "./assets/test.png";
+  return () => "/assets/test.png";
 }
 
 describe("paintsToBackgroundStyle — Figma Crop on STRETCH paint", () => {
@@ -64,7 +64,7 @@ describe("paintsToBackgroundStyle — Figma Crop on STRETCH paint", () => {
       pinResolver(),
       { width: 63, height: 63 },
     );
-    expect(style.backgroundImage).toBe('url("./assets/test.png")');
+    expect(style.backgroundImage).toBe("url('/assets/test.png')");
     // size = (W / m00, H / m11) = (78.75, 101.96)
     expect(style.backgroundSize).toBe("78.75px 101.96px");
     // position = (-m02·W/m00, -m12·H/m11) = (-13.75, -4.69)
@@ -141,7 +141,7 @@ describe("imageElementForNode — structural <img> emission for rotation / skew"
     if (emission === undefined) {
       throw new Error("expected structural emission for a rotated image paint");
     }
-    expect(emission.src).toBe("./assets/test.png");
+    expect(emission.src).toBe("/assets/test.png");
     expect(emission.imgStyle.position).toBe("absolute");
     expect(emission.imgStyle.left).toBe("0px");
     expect(emission.imgStyle.top).toBe("0px");

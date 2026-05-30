@@ -49,7 +49,7 @@ import {
   isRendered,
   resolveContainerLayout,
 } from "../layout/resolve";
-import { instanceScaleVar } from "../layout/liquid";
+import { instanceScaleVar, instanceScopeVars } from "../layout/liquid";
 import { collapseChain } from "../layout/collapse";
 import type { ReparentResult } from "../layout/reparent";
 import { guidToString } from "@higma-document-models/fig/domain";
@@ -1279,15 +1279,25 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   // path so `wrapForScale`'s transformed wrapper still paints
   // outside its own bounds.
   applyInstanceClipIfTruncated(node, context, mergedWrapStyle);
-  // Liquid: hand the component subtree a scale unit derived from THIS
-  // scope's `--lqd` and the INSTANCE's footprint (`node.size.x`, the size
-  // the component is placed at — NOT the symbol's natural width), so the
-  // component fills its slot whether placed at natural size or resized.
-  // The component root reads `--lqd-down`; the wrapper's own position /
-  // size still scale by the inherited `--lqd`.
+  // Liquid: tell the component subtree how to scale itself.
+  //   - `--lqd-w` (always): the width of THIS scope, so a non-resized
+  //     component can scale its OWN authored width against it — that
+  //     authored width comes from the emitted component (reliable) so
+  //     nested components land at the right scale at any depth;
+  //   - `--lqd-down` (only for a UNIFORM RESIZE — a Figma proportional
+  //     scale, e.g. a 150-wide icon dropped into a 40 slot): the
+  //     component fills its smaller slot via the INSTANCE footprint.
+  // A natural / HUG / non-uniform instance gets only `--lqd-w`, so every
+  // instance of one component scales by the PAGE factor uniformly and
+  // siblings stay the same size regardless of content. The wrapper's own
+  // position / size still scale by the inherited `--lqd`.
   if (context.layoutSizing === "liquid" && context.designWidth !== undefined && context.designWidth > 0 && node.size) {
-    const scaleVar = instanceScaleVar(node.size.x, context.designWidth);
-    mergedWrapStyle[scaleVar.key] = scaleVar.value;
+    Object.assign(mergedWrapStyle, instanceScopeVars(context.designWidth));
+    const uniform = instanceUniformScale(node, context);
+    if (uniform) {
+      const scaleVar = instanceScaleVar(node.size.x, context.designWidth);
+      mergedWrapStyle[scaleVar.key] = scaleVar.value;
+    }
   }
   const wrapStyleProp = styleAsProp(mergedWrapStyle, wrapTransform);
 
@@ -1851,37 +1861,59 @@ const SCALE_EPSILON = 1e-3;
  * symbol render at its authored natural size; the wrapper still
  * occupies the INSTANCE's authored width via the parent layout.
  */
+/**
+ * The uniform scale an INSTANCE applies to its SYMBOL — Figma's
+ * proportional resize, e.g. a 150×58 icon dropped into a 40×15 slot
+ * (`sx ≈ sy ≠ 1`). Returns the per-axis factors and the SYMBOL's
+ * natural size, or `undefined` when the instance is at its natural
+ * size (`sx ≈ sy ≈ 1`, no resize) or sized non-uniformly (`sx ≠ sy` —
+ * a crop, which scales nothing). Single source of truth for "is this a
+ * uniform resize", shared by `wrapForScale` (which paints the CSS
+ * transform in fixed mode) and the liquid `--lqd-down` numerator
+ * (which scales by the footprint ONLY for a true uniform resize).
+ */
+function instanceUniformScale(
+  instance: FigNode,
+  context: EmitContext,
+): { readonly sx: number; readonly sy: number; readonly symbolSize: { readonly x: number; readonly y: number } } | undefined {
+  const symbolSize = naturalSymbolSize(instance, context);
+  if (!symbolSize || !instance.size) {
+    return undefined;
+  }
+  if (symbolSize.x <= 0 || symbolSize.y <= 0) {
+    return undefined;
+  }
+  const sx = instance.size.x / symbolSize.x;
+  const sy = instance.size.y / symbolSize.y;
+  if (Math.abs(sx - 1) < SCALE_EPSILON && Math.abs(sy - 1) < SCALE_EPSILON) {
+    return undefined;
+  }
+  if (Math.abs(sx - sy) > SCALE_RATIO_TOLERANCE) {
+    return undefined;
+  }
+  return { sx, sy, symbolSize };
+}
+
 function wrapForScale(
   instance: FigNode,
   context: EmitContext,
   componentTag: JsxNode,
 ): JsxNode {
   // In liquid mode the component already fills its slot via the
-  // `--lqd-down` unit (derived from the INSTANCE footprint), so a
-  // `transform: scale` here would shrink it a second time. Skip it.
+  // `--lqd-down` unit, so a `transform: scale` here would shrink it a
+  // second time. Skip it.
   if (context.layoutSizing === "liquid") {
     return componentTag;
   }
-  const symbolSize = naturalSymbolSize(instance, context);
-  if (!symbolSize || !instance.size) {
-    return componentTag;
-  }
-  if (symbolSize.x <= 0 || symbolSize.y <= 0) {
-    return componentTag;
-  }
-  const sx = instance.size.x / symbolSize.x;
-  const sy = instance.size.y / symbolSize.y;
-  if (Math.abs(sx - 1) < SCALE_EPSILON && Math.abs(sy - 1) < SCALE_EPSILON) {
-    return componentTag;
-  }
-  if (Math.abs(sx - sy) > SCALE_RATIO_TOLERANCE) {
+  const scale = instanceUniformScale(instance, context);
+  if (!scale) {
     return componentTag;
   }
   const scaleStyle: Record<string, string> = {
-    transform: `scale(${sx}, ${sy})`,
+    transform: `scale(${scale.sx}, ${scale.sy})`,
     transformOrigin: "top left",
-    width: `${symbolSize.x}px`,
-    height: `${symbolSize.y}px`,
+    width: `${scale.symbolSize.x}px`,
+    height: `${scale.symbolSize.y}px`,
   };
   return el("div", {
     props: [styleProp(scaleStyle)],

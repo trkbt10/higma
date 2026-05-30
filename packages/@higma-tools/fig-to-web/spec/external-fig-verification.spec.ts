@@ -25,7 +25,7 @@
  *     emitted file whose default-export name matches the imported
  *     identifier);
  *   - asset URL ↔ collected-bytes round-trip (every
- *     `./assets/<hash>.<ext>` URL referenced by the JSX has a matching
+ *     `/assets/<hash>.<ext>` URL referenced by the JSX has a matching
  *     entry in `EmitResult.assets`, and vice-versa);
  *   - `var(--token)` references in TSX resolve to a `--token:` line in
  *     the generated `tokens.css`;
@@ -243,7 +243,7 @@ function findDuplicates<T>(items: readonly T[], keyOf: (item: T) => string): rea
 
 const NAMED_IMPORT_PATTERN = /import\s*\{\s*([^}]+)\s*\}\s*from\s*["']([^"']+)["']/g;
 const NAMESPACE_IMPORT_PATTERN = /import\s*\*\s*as\s+(\w+)\s*from\s*["']([^"']+)["']/g;
-const ASSET_URL_PATTERN = /\.\/assets\/([0-9a-f]+)\.([a-z0-9]+)/gi;
+const ASSET_URL_PATTERN = /\/assets\/([0-9a-f]+)\.([a-z0-9]+)/gi;
 const TOKEN_VAR_PATTERN = /var\(\s*--([\w-]+)\s*\)/g;
 
 type RelativeImport = {
@@ -640,7 +640,7 @@ function describeFigPath(figPath: string): void {
       expect(issues, issues.join("\n")).toEqual([]);
     });
 
-    it("every ./assets/<hash>.<ext> URL referenced by emitted files has a matching asset entry", () => {
+    it("every /assets/<hash>.<ext> URL referenced by emitted files has a matching asset entry", () => {
       const state = requireState(stateRef);
       const declaredAssets = new Set(state.emitResult.assets.map((asset) => asset.path));
       const issues: string[] = [];

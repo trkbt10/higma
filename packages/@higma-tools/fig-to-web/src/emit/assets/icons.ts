@@ -30,9 +30,11 @@ export type IconAsset = {
 
 export type IconRegistry = {
   /**
-   * Register an SVG payload for an externalised vector node. Returns
-   * the path relative to the output root (`./assets/icons/<slug>.svg`)
-   * that an `<img src="…" />` reference should carry.
+   * Register an SVG payload for an externalised vector node. Returns the
+   * root-absolute asset URL (`/assets/icons/<slug>.svg`) that an
+   * `<img src="…" />` reference should carry — root-absolute so it
+   * resolves from the served root at any page depth (standalone pages
+   * sit three directories deep; a document-relative `./assets/…` 404s).
    */
   readonly register: (node: FigNode, svgText: string) => string;
   /** Snapshot every asset registered so far. */
@@ -75,7 +77,7 @@ export function createIconRegistry(): IconRegistry {
       const slug = uniqueId(baseSlug, usedSlugs);
       const path = `assets/icons/${slug}.svg`;
       assets.push({ path, contents: svgText });
-      const reference = `./${path}`;
+      const reference = `/${path}`;
       byKey.set(key, reference);
       return reference;
     },
